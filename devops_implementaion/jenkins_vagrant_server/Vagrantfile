@@ -1,0 +1,40 @@
+# ============================================================
+# Vagrant Server 3: Jenkins CI/CD
+# Purpose : Spin up an Ubuntu 22.04 VM, install Jenkins +
+#            Docker + Go, and run the full CI/CD pipeline.
+# Usage   :
+#   export DOCKERHUB_USERNAME=<your-username>
+#   export DOCKERHUB_TOKEN=<your-token>
+#   vagrant up
+#
+#   Then open: http://192.168.56.12:8080
+#   Use the initial admin password printed in the provision output.
+# ============================================================
+Vagrant.configure("2") do |config|
+
+  config.vm.box = "generic/ubuntu2204"
+
+  config.vm.network "private_network", ip: "192.168.56.12"
+
+  # Expose Jenkins port to the host browser
+  config.vm.network "forwarded_port", guest: 8080, host: 9090
+
+  config.vm.provider "libvirt" do |lv|
+    lv.memory = 4096   # Jenkins needs more RAM than a basic Docker VM
+    lv.cpus   = 2
+  end
+
+  # Sync app source and the full devops_implementaion/ tree into the VM
+  config.vm.synced_folder "../../go-web-app",  "/home/vagrant/go-web-app",
+    owner: "vagrant", group: "vagrant"
+  config.vm.synced_folder "../",               "/home/vagrant/devops",
+    owner: "vagrant", group: "vagrant"
+
+  # Pass DockerHub creds from host environment into the VM
+  config.vm.provision "shell", path: "provision_jenkins.sh",
+    env: {
+      "DOCKERHUB_USERNAME" => ENV.fetch("DOCKERHUB_USERNAME", ""),
+      "DOCKERHUB_TOKEN"    => ENV.fetch("DOCKERHUB_TOKEN",    "")
+    }
+
+end

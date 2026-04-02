@@ -1,0 +1,32 @@
+# Deployment manifest for go-web-app
+# NOTE: For production, use the Helm chart instead.
+# This is for learning / quick kubectl apply.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-web-app
+  labels:
+    app: go-web-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-web-app
+  template:
+    metadata:
+      labels:
+        app: go-web-app
+    spec:
+      containers:
+        - name: go-web-app
+          # TODO: replace with your DockerHub username
+          image: <your-dockerhub-username>/go-web-app:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"

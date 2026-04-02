@@ -1,0 +1,16 @@
+# Vagrant state — never commit these
+**/.vagrant/
+**/private_key
+
+# Embedded git repos (tracked as separate repos, not submodules)
+go-web-app/
+go-web-app-devops/
+
+# Secrets / credentials
+**/dockerhub_creds.env
+**/login.txt
+
+# OS / Editor
+.DS_Store
+*.swp
+*.swo
