@@ -1,7 +1,7 @@
-# Git & GitHub — Complete Command Reference
+# Go Web App — DevOps Notes & Command Reference
 
 > This file is updated progressively as the project evolves.
-> Every command here was actually run and verified.
+> Every command here was actually run and verified on the Jenkins Vagrant VM.
 
 ---
 
@@ -267,3 +267,159 @@ GitHub Account: rishu4u
 ---
 
 *Last updated: 2026-04-05 — SSH key setup, permission denied fix, Jenkins config*
+
+---
+
+## ARCHITECTURE — What We Have Built So Far
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    YOUR LAPTOP (Host)                       │
+│                                                             │
+│  /home/srv/project_srv/                                     │
+│  ├── go-web-app/          ← Go app source code              │
+│  └── devops_implementaion/ ← Jenkins, Helm, K8s, Vagrant    │
+│                                                             │
+│  Vagrant manages 2 VMs:                                     │
+│  ┌──────────────────────┐  ┌──────────────────────────────┐ │
+│  │  Jenkins VM          │  │  (future) Build/Test VM      │ │
+│  │  192.168.56.12:8080  │  │                              │ │
+│  │                      │  │                              │ │
+│  │  /home/vagrant/      │  └──────────────────────────────┘ │
+│  │  ├── go-web-app/     │                                   │
+│  │  │   (synced from    │                                   │
+│  │  │    host)          │                                   │
+│  │  └── devops/         │                                   │
+│  │      (synced from    │                                   │
+│  │       host)          │                                   │
+│  └──────────────────────┘                                   │
+└─────────────────────────────────────────────────────────────┘
+                         │
+                         │ git push (SSH)
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  GitHub (rishu4u)                           │
+│                                                             │
+│  rishu4u/go-web-app                                         │
+│  ├── go-web-app source (main.go, go.mod...)                 │
+│  └── devops_implementaion/ (Jenkinsfile, Helm, K8s...)      │
+└─────────────────────────────────────────────────────────────┘
+                         │
+                         │ Jenkins pulls from GitHub
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│              NEXT STEP: Jenkins Pipeline                    │
+│                                                             │
+│  Stage 1: Checkout  → git pull from rishu4u/go-web-app      │
+│  Stage 2: Test      → go test ./...                         │
+│  Stage 3: Version   → auto-increment tag (v1.0 → v1.1)      │
+│  Stage 4: Build     → docker build -t rishu4u/go-web-app    │
+│  Stage 5: Approve   → human clicks Proceed/Abort            │
+│  Stage 6: Push      → docker push to DockerHub              │
+│  Stage 7: Helm      → update image tag in values.yaml       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Current Status
+| Component | Status |
+|---|---|
+| go-web-app source code | ✅ On GitHub (`rishu4u/go-web-app`) |
+| devops_implementaion files | ✅ On GitHub (same repo) |
+| SSH key on Jenkins VM | ✅ Set up and verified |
+| git identity on Jenkins VM | ✅ Set (user.name + user.email) |
+| Remote URL on Jenkins VM | ✅ Points to `rishu4u/go-web-app` |
+| Jenkins job config | 🔲 Next step |
+| Docker build via Jenkins | 🔲 Next step |
+| DockerHub push via Jenkins | 🔲 Next step |
+
+---
+
+## HOW `git push` WORKS
+
+```
+Your Machine (VM)                    GitHub
+─────────────────                    ──────
+  commit A  ←── already there ───►  commit A
+  commit B  ←── already there ───►  commit B
+  commit C  ◄── NEW, not on GitHub
+  commit D  ◄── NEW, not on GitHub
+
+  git push  ──────── sends C, D ──► commit C
+                                    commit D
+```
+
+Git only sends commits that GitHub doesn't have yet.
+
+```bash
+git push                  # push using default (set by -u)
+git push -u origin main   # -u saves default, so future git push works alone
+```
+
+**Under the hood:**
+1. SSH key checked → GitHub allows/denies access
+2. Git compares local commits vs GitHub commits
+3. Only new commits are sent
+4. GitHub moves branch pointer to your latest commit
+
+---
+
+## HOW TO ROLLBACK A COMMIT
+
+### Not pushed yet — 3 options
+
+```bash
+# Option 1: Undo commit, KEEP files staged (safest)
+git reset --soft HEAD~1
+# Use when: wrong commit message, not ready yet
+
+# Option 2: Undo commit, unstage files, keep files on disk
+git reset --mixed HEAD~1   # same as: git reset HEAD~1
+# Use when: want to re-select what to stage
+
+# Option 3: Undo commit AND delete file changes (destructive ⚠️)
+git reset --hard HEAD~1
+# Use when: want to completely go back in time
+```
+
+### Already pushed to GitHub — use revert
+
+```bash
+git revert HEAD     # creates a NEW commit that undoes last commit
+git push            # push the revert commit
+# Safe — does NOT rewrite history, GitHub won't complain
+```
+
+### Visual
+
+```
+BEFORE:   A → B → C      (C is last commit)
+
+--soft    A → B           (C removed, files still staged)
+--mixed   A → B           (C removed, files unstaged)
+--hard    A → B           (C removed, files deleted from disk)
+revert    A → B → C → D  (D undoes C, history preserved)
+```
+
+### Rule of thumb
+| Situation | Command |
+|---|---|
+| Not pushed, redo commit message | `git reset --soft HEAD~1` |
+| Not pushed, discard completely | `git reset --hard HEAD~1` |
+| Already pushed to GitHub | `git revert HEAD` then `git push` |
+
+---
+
+## IDENTITY vs REMOTE vs SSH — Key Distinction
+
+| | Command | What it controls | Auth? |
+|---|---|---|---|
+| Identity | `git config user.email` | Label on your commit (sender name) | ❌ No |
+| Remote | `git remote -v` | Where to push (destination URL) | ❌ No |
+| Access | `ssh -T git@github.com` | Permission to push | ✅ Yes |
+
+> `git remote -v` showing your username does NOT mean you are logged in.
+> SSH key is the ONLY thing that controls push access.
+
+---
+
+*Last updated: 2026-04-06 — Added architecture, git push internals, rollback commands*
