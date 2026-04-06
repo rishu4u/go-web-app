@@ -22,10 +22,13 @@ pipeline {
   agent any
 
   environment {
-    APP_DIR         = "/home/vagrant/go-web-app"
-    DEVOPS_DIR      = "/home/vagrant/devops"
-    VERSION_FILE    = "${DEVOPS_DIR}/docker_build_vagrant_server/.docker_version"
-    HELM_VALUES     = "${DEVOPS_DIR}/helm/go-web-app-chart/values.yaml"
+    // WORKSPACE is Jenkins-managed: /var/lib/jenkins/workspace/go-web-app
+    // Jenkins clones the full repo here at checkout — jenkins user has full access
+    APP_DIR         = "${WORKSPACE}"
+    DEVOPS_DIR      = "${WORKSPACE}/devops_implementaion"
+    // VERSION_FILE lives OUTSIDE workspace so git checkout doesn't reset it between builds
+    VERSION_FILE    = "/var/lib/jenkins/.docker_version"
+    HELM_VALUES     = "${WORKSPACE}/devops_implementaion/helm/go-web-app-chart/values.yaml"
     CREDS_FILE      = "/var/lib/jenkins/dockerhub_creds.env"
     GO_BIN          = "/usr/local/go/bin"
   }
