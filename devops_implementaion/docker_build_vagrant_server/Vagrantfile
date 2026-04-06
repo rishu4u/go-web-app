@@ -1,0 +1,34 @@
+# ============================================================
+# Vagrant Server: Docker Build & Push
+# Purpose : Spin up an Ubuntu 22.04 VM, install Docker,
+#            build the go-web-app image and push to DockerHub.
+# Usage   :
+#   export DOCKERHUB_USERNAME=<your-username>
+#   export DOCKERHUB_TOKEN=<your-token>
+#   vagrant up
+# ============================================================
+Vagrant.configure("2") do |config|
+
+  config.vm.box = "generic/ubuntu2204"
+
+  config.vm.network "private_network", ip: "192.168.56.11"
+
+  config.vm.provider "libvirt" do |lv|
+    lv.memory = 2048
+    lv.cpus   = 2
+  end
+
+  # Sync app source and the Dockerfile from devops_implementaion/
+  config.vm.synced_folder "../../go-web-app",  "/home/vagrant/go-web-app",
+    owner: "vagrant", group: "vagrant"
+  config.vm.synced_folder "../",               "/home/vagrant/devops",
+    owner: "vagrant", group: "vagrant"
+
+  # Pass DockerHub creds from host environment into the VM
+  config.vm.provision "shell", path: "provision_docker.sh",
+    env: {
+      "DOCKERHUB_USERNAME" => ENV.fetch("DOCKERHUB_USERNAME", ""),
+      "DOCKERHUB_TOKEN"    => ENV.fetch("DOCKERHUB_TOKEN", "")
+    }
+
+end

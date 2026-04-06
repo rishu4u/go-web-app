@@ -1,0 +1,123 @@
+# ============================================================
+# GitHub Actions CI/CD Pipeline — my DevOps implementation
+#
+# Pipeline stages:
+#   1. build       — go build + go test
+#   2. code-quality— golangci-lint
+#   3. push        — Docker build & push to DockerHub
+#   4. update-helm — bump image tag in helm/values.yaml
+#
+# Required GitHub Secrets:
+#   DOCKERHUB_USERNAME  — your DockerHub username
+#   DOCKERHUB_TOKEN     — your DockerHub access token
+#   TOKEN               — GitHub PAT with repo write access (for helm tag bump commit)
+# ============================================================
+
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'helm/**'
+      - 'k8s/**'
+      - 'README.md'
+      - 'devops_implementaion/**'
+
+jobs:
+
+  # ----------------------------------------------------------
+  # Job 1: Build & Test
+  # ----------------------------------------------------------
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build
+        run: go build -o go-web-app
+
+      - name: Test
+        run: go test ./...
+
+  # ----------------------------------------------------------
+  # Job 2: Code Quality (runs in parallel with build)
+  # ----------------------------------------------------------
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.56.2
+
+  # ----------------------------------------------------------
+  # Job 3: Docker Build & Push
+  # ----------------------------------------------------------
+  push:
+    name: Docker Build & Push
+    runs-on: ubuntu-latest
+    needs: build          # only run if tests pass
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./devops_implementaion/Dockerfile
+          push: true
+          # Tag with the GitHub run ID for traceability
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/go-web-app:${{ github.run_id }}
+
+  # ----------------------------------------------------------
+  # Job 4: Update image tag in Helm values.yaml
+  # ----------------------------------------------------------
+  update-helm-tag:
+    name: Update Helm Tag
+    runs-on: ubuntu-latest
+    needs: push
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.TOKEN }}
+
+      - name: Update tag in Helm values.yaml
+        run: |
+          sed -i 's/tag: .*/tag: "${{ github.run_id }}"/' \
+            devops_implementaion/helm/go-web-app-chart/values.yaml
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.email "devops-bot@github.com"
+          git config --global user.name "DevOps Bot"
+          git add devops_implementaion/helm/go-web-app-chart/values.yaml
+          git commit -m "ci: update Helm image tag to ${{ github.run_id }}"
+          git push

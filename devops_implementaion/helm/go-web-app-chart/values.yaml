@@ -1,0 +1,33 @@
+# Default values for go-web-app-chart.
+# These are overridden by the CI/CD pipeline when it bumps the image tag.
+
+replicaCount: 1
+
+image:
+  # TODO: replace with your DockerHub username
+  repository: <your-dockerhub-username>/go-web-app
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations: {}
+  hosts:
+    - host: go-web-app.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "64Mi"
+  limits:
+    cpu: "250m"
+    memory: "128Mi"

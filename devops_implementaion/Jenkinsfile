@@ -1,0 +1,215 @@
+// ============================================================
+// Jenkinsfile — Declarative Pipeline
+// CI/CD for saurabhhub1/go-web-app
+//
+// Stages:
+//   1. Checkout     — pull latest source from Git
+//   2. Test         — go test ./...
+//   3. Version Tag  — auto-increment minor version (v1.0 → v1.1)
+//   4. Docker Build — build image with new tag
+//   5. Push?        — human approval gate (Proceed / Abort)
+//   6. Docker Push  — push to DockerHub
+//   7. Update Helm  — bump image tag in helm/values.yaml
+//
+// Prerequisites (on the Jenkins VM):
+//   - Docker installed and jenkins user in docker group
+//   - Go 1.22 at /usr/local/go/bin/go
+//   - /var/lib/jenkins/dockerhub_creds.env with credentials
+// ============================================================
+
+pipeline {
+
+  agent any
+
+  environment {
+    // WORKSPACE is Jenkins-managed: /var/lib/jenkins/workspace/go-web-app
+    // Jenkins clones the full repo here at checkout — jenkins user has full access
+    // Unified repo structure: Go source at WORKSPACE root, DevOps files in subfolder
+    APP_DIR         = "${WORKSPACE}"
+    DEVOPS_DIR      = "${WORKSPACE}/devops_implementaion"
+    // VERSION_FILE lives OUTSIDE workspace so git checkout doesn't reset it between builds
+    VERSION_FILE    = "/var/lib/jenkins/.docker_version"
+    HELM_VALUES     = "${WORKSPACE}/devops_implementaion/helm/go-web-app-chart/values.yaml"
+    CREDS_FILE      = "/var/lib/jenkins/dockerhub_creds.env"
+    GO_BIN          = "/usr/local/go/bin"
+  }
+
+  stages {
+
+    // ----------------------------------------------------------
+    // Stage 1: Checkout
+    // ----------------------------------------------------------
+    stage('Checkout') {
+      steps {
+        echo "=== Pulling latest source ==="
+        // When triggered via SCM (GitHub webhook / poll), Jenkins
+        // already checks out the repo. This echo confirms the step.
+        sh "echo 'Workspace: ${WORKSPACE}'"
+        sh "ls ${DEVOPS_DIR} || true"
+      }
+    }
+
+    // ----------------------------------------------------------
+    // Stage 2: Run Go Tests
+    // ----------------------------------------------------------
+    stage('Test') {
+      steps {
+        echo "=== Running go test ==="
+        sh """
+          export PATH=\$PATH:${GO_BIN}
+          cd ${APP_DIR}
+          go test ./...
+        """
+      }
+    }
+
+    // ----------------------------------------------------------
+    // Stage 3: Version Tag Management
+    // ----------------------------------------------------------
+    stage('Version Tag') {
+      steps {
+        script {
+          echo "=== Resolving version tag ==="
+
+          // Load DockerHub username from creds file
+          def creds = readFile(env.CREDS_FILE).trim()
+          def username = ""
+          creds.split("\n").each { line ->
+            if (line.startsWith("DOCKERHUB_USERNAME=")) {
+              username = line.replace("DOCKERHUB_USERNAME=", "").trim()
+            }
+          }
+          env.DOCKERHUB_USERNAME = username
+
+          // Read last version or default to v1.0
+          def lastVersion = "v1.0"
+          if (fileExists(env.VERSION_FILE)) {
+            lastVersion = readFile(env.VERSION_FILE).trim()
+          }
+          echo "Last version: ${lastVersion}"
+
+          // Auto-increment minor version  e.g. v1.3 → v1.4
+          def parts   = lastVersion.replaceAll('^v', '').tokenize('.')
+          def major   = parts[0].toInteger()
+          def minor   = parts[1].toInteger() + 1
+          def suggestion = "v${major}.${minor}"
+
+          // Pause and let the user accept or override the tag
+          def userInput = input(
+            id: 'versionInput',
+            message: "Last build: ${lastVersion}  |  Suggested next tag: ${suggestion}",
+            parameters: [
+              string(
+                name: 'VERSION',
+                defaultValue: suggestion,
+                description: 'Accept the suggested tag or type your own (e.g. v2.0)'
+              )
+            ]
+          )
+
+          env.IMAGE_VERSION = userInput ?: suggestion
+          env.IMAGE_TAG     = "${env.DOCKERHUB_USERNAME}/go-web-app:${env.IMAGE_VERSION}"
+          echo "Building image as: ${env.IMAGE_TAG}"
+        }
+      }
+    }
+
+    // ----------------------------------------------------------
+    // Stage 4: Docker Build
+    // ----------------------------------------------------------
+    stage('Docker Build') {
+      steps {
+        echo "=== Building Docker image: ${env.IMAGE_TAG} ==="
+        sh """
+          docker build \
+            -f ${DEVOPS_DIR}/Dockerfile \
+            -t ${env.IMAGE_TAG} \
+            ${APP_DIR}
+        """
+        echo "Image built successfully: ${env.IMAGE_TAG}"
+      }
+    }
+
+    // ----------------------------------------------------------
+    // Stage 5: Push Approval Gate
+    // ----------------------------------------------------------
+    stage('Push to DockerHub?') {
+      steps {
+        script {
+          // Show a Proceed / Abort button in the Jenkins UI
+          input(
+            id: 'pushApproval',
+            message: "Push ${env.IMAGE_TAG} to DockerHub?",
+            ok: 'Yes, Push It!'
+          )
+        }
+      }
+    }
+
+    // ----------------------------------------------------------
+    // Stage 6: Docker Push
+    // ----------------------------------------------------------
+    stage('Docker Push') {
+      steps {
+        echo "=== Pushing ${env.IMAGE_TAG} to DockerHub ==="
+        sh """
+          # Load credentials from the secrets file
+          export \$(grep -v '^#' ${CREDS_FILE} | xargs)
+
+          echo "\$DOCKERHUB_TOKEN" | docker login \
+            --username "\$DOCKERHUB_USERNAME" \
+            --password-stdin
+
+          docker push ${env.IMAGE_TAG}
+        """
+
+        // Save the successfully pushed version
+        sh "echo '${env.IMAGE_VERSION}' > ${env.VERSION_FILE}"
+        echo "Version ${env.IMAGE_VERSION} saved to ${env.VERSION_FILE}"
+        echo "Pushed: ${env.IMAGE_TAG}"
+      }
+    }
+
+    // ----------------------------------------------------------
+    // Stage 7: Update Helm values.yaml
+    // ----------------------------------------------------------
+    stage('Update Helm Tag') {
+      steps {
+        echo "=== Bumping image tag in Helm values.yaml ==="
+        sh """
+          sed -i 's/tag: .*/tag: "${env.IMAGE_VERSION}"/' ${HELM_VALUES}
+          grep 'tag:' ${HELM_VALUES}
+        """
+        echo "Helm values.yaml updated to tag: ${env.IMAGE_VERSION}"
+        echo "Commit and push this file to Git to trigger Argo CD sync."
+      }
+    }
+
+  }  // end stages
+
+  // ----------------------------------------------------------
+  // Post actions
+  // ----------------------------------------------------------
+  post {
+    success {
+      echo """
+      ================================================================
+       PIPELINE SUCCEEDED
+       Image : ${env.IMAGE_TAG ?: 'N/A'}
+       Pull  : docker pull ${env.IMAGE_TAG ?: 'N/A'}
+      ================================================================
+      """
+    }
+    failure {
+      echo """
+      ================================================================
+       PIPELINE FAILED — check the stage logs above for details.
+      ================================================================
+      """
+    }
+    aborted {
+      echo "Pipeline was aborted (push was declined or build was cancelled)."
+    }
+  }
+
+}
