@@ -25,9 +25,12 @@ Vagrant.configure("2") do |config|
   end
 
   # Sync app source and the full devops_implementaion/ tree into the VM
-  config.vm.synced_folder "../../go-web-app",  "/home/vagrant/go-web-app",
+  # NOTE: Vagrantfile is now at go-web-app/devops_implementaion/jenkins_vagrant_server/
+  #   ../../     = go-web-app/           (Go source — 2 levels up from here)
+  #   ../        = devops_implementaion/ (DevOps files — 1 level up from here)
+  config.vm.synced_folder "../../",  "/home/vagrant/go-web-app",
     owner: "vagrant", group: "vagrant"
-  config.vm.synced_folder "../",               "/home/vagrant/devops",
+  config.vm.synced_folder "../",     "/home/vagrant/devops",
     owner: "vagrant", group: "vagrant"
 
   # Pass DockerHub creds from host environment into the VM

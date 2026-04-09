@@ -240,21 +240,39 @@ kubectl get pods
 
 ## Project Structure
 
+Everything lives on the **`main` branch** under `go-web-app/` (master branch deleted — single source of truth).
+
 ```
-devops_implementaion/
-├── build_test_vagrant_server/         ← VM 1: Go build & test
-│   ├── Vagrantfile
-│   └── provision_build.sh
-├── docker_build_vagrant_server/       ← VM 2: Docker build & push
-│   ├── Vagrantfile
-│   ├── provision_docker.sh            ← auto version tag + push prompt
-│   └── .docker_version                ← last pushed tag (e.g. v1.2)
-├── jenkins_vagrant_server/            ← VM 3: Jenkins CI/CD (self-hosted)
-│   ├── Vagrantfile                    ← Ubuntu 22.04, 4 GB, port 9090→8080
-│   └── provision_jenkins.sh          ← installs Java, Jenkins, Docker, Go
-├── Jenkinsfile                        ← Declarative pipeline (7 stages)
-├── Dockerfile                         ← Multi-stage (golang:1.22 → distroless)
-├── .github/workflows/cicd.yaml        ← GitHub Actions CI/CD (Option A)
-├── helm/go-web-app-chart/             ← Helm chart
-└── k8s/manifests/                     ← Raw k8s manifests
+go-web-app/                            ← repo root (main branch)
+├── main.go                            ← Go application
+├── main_test.go
+├── go.mod
+├── static/
+├── README.md
+└── devops_implementaion/              ← ALL DevOps files live here
+    ├── Jenkinsfile                    ← Declarative pipeline (7 stages)
+    ├── Dockerfile                     ← Multi-stage (golang:1.22 → distroless)
+    ├── build_test_vagrant_server/     ← VM 1: Go build & test
+    │   ├── Vagrantfile
+    │   └── provision_build.sh
+    ├── docker_build_vagrant_server/   ← VM 2: Docker build & push (manual)
+    │   ├── Vagrantfile
+    │   └── provision_docker.sh
+    ├── jenkins_vagrant_server/        ← VM 3: Jenkins CI/CD (persistent)
+    │   ├── Vagrantfile                ← Ubuntu 22.04, 4 GB RAM, port 9090→8080
+    │   └── provision_jenkins.sh       ← auto-installs Java, Jenkins, Docker, Go
+    ├── helm/go-web-app-chart/         ← Helm chart for K8s deployment
+    ├── k8s/manifests/                 ← Raw K8s YAMLs
+    ├── .github/workflows/cicd.yaml    ← GitHub Actions (Option A)
+    ├── pipeline_plan.md               ← Full 7-phase DevOps roadmap
+    ├── flow_and_commands.md           ← Complete command reference
+    └── NOTES.md                       ← Architecture + troubleshooting
 ```
+
+> **To make changes:** edit inside `go-web-app/devops_implementaion/`, then:
+> ```bash
+> cd /home/srv/project_srv/go-web-app
+> git add devops_implementaion/
+> git commit -m "your message"
+> git push origin main
+> ```

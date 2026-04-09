@@ -472,6 +472,94 @@ git push -u origin main     # or whatever branch name is shown
 
 ---
 
+### ❌ git remote -v still shows old URL after you changed it
+```
+origin  https://github.com/iam-veeramalla/go-web-app.git (fetch)
+```
+**Cause:** The folder is a Vagrant **synced folder**. The `.git/config` file syncs from the host.
+If the HOST still has the old URL, every `vagrant up` / sync overwrites your change on the VM.
+**Fix:** Change the remote URL on the **HOST first**, then on the VM:
+```bash
+# On HOST laptop
+cd /home/srv/project_srv/go-web-app
+git remote set-url origin git@github.com:rishu4u/go-web-app.git
+
+# Then on Vagrant VM (if needed)
+git remote set-url origin git@github.com:rishu4u/go-web-app.git
+```
+> ⭐ Rule: With synced folders, always make config changes on the HOST first.
+
+---
+
+### ❌ Jenkins pipeline fails — `go test ./...` can't find go.mod
+```
+pattern ./...: directory prefix . does not contain main module or its selected dependencies
+```
+**Cause:** Go source code (`main.go`, `go.mod`) and DevOps files (Jenkinsfile) were on
+**different branches** of the same repo. Jenkins checked out the DevOps branch which has no `go.mod`.
+**Fix:** Consolidate everything into one branch (`main`) as a unified folder structure:
+```
+go-web-app/ (main branch)
+├── main.go
+├── go.mod
+└── devops_implementaion/
+    ├── Jenkinsfile
+    └── Dockerfile
+```
+```bash
+# Copy devops files into go-web-app/ as a subfolder
+cp -r /home/srv/project_srv/devops_implementaion \
+      /home/srv/project_srv/go-web-app/devops_implementaion
+cd /home/srv/project_srv/go-web-app
+git add devops_implementaion/
+git commit -m "feat: unify repo — add devops files as subfolder"
+git pull --rebase origin main   # sync remote changes first
+git push origin main
+```
+Then update Jenkins job → Branch: `*/main` | Script Path: `devops_implementaion/Jenkinsfile`
+
+---
+
+### ❌ Push rejected — remote contains work you don't have
+```
+error: failed to push some refs
+hint: Updates were rejected because the remote contains work that you do not have locally
+```
+**Cause:** Someone (or another local folder) pushed to the same branch on GitHub before you did.
+**Fix:** Pull first, then push:
+```bash
+git pull --rebase origin main   # rebase your commits on top of remote
+git push origin main
+```
+
+---
+
+### ❌ Push blocked — Docker Personal Access Token detected in commit
+```
+remote: - GITHUB PUSH PROTECTION
+remote:   - Push cannot contain secrets
+remote:   — Docker Personal Access Token
+```
+**Cause:** A real DockerHub PAT token was hardcoded in a file (e.g. `login.txt`) that got committed.
+**Fix:** Replace token with a placeholder, amend the commit, force push:
+```bash
+# Edit the file — replace real token with placeholder text
+vim devops_implementaion/jenkins_vagrant_server/login.txt
+# Change: dckr_pat_xxxxx  →  <your-dockerhub-pat-token-here>
+
+git add devops_implementaion/jenkins_vagrant_server/login.txt
+git add devops_implementaion/docker_build_vagrant_server/login.txt
+git commit --amend --no-edit        # rewrites last commit
+git push --force-with-lease origin main   # force needed since history was rewritten
+```
+> ⚠️ After this, regenerate your DockerHub token — the old one is compromised.
+> Update it on the Jenkins VM: `sudo nano /var/lib/jenkins/dockerhub_creds.env`
+
+> 💡 The actual pipeline credentials stay safe in `/var/lib/jenkins/dockerhub_creds.env`
+> which is NOT tracked by git — only `login.txt` (a notes file) had the issue.
+
+---
+
 ## 1.10  IDENTITY vs REMOTE vs SSH SUMMARY TABLE
 
 | | Command | What it controls | Affects push access? |
@@ -479,6 +567,96 @@ git push -u origin main     # or whatever branch name is shown
 | Identity | `git config user.email` | Label shown on commit | ❌ No |
 | Remote | `git remote -v` | Where to push (URL) | ❌ No |
 | Access | `ssh -T git@github.com` | Permission to push | ✅ Yes |
+
+---
+
+## 1.11  REPO CLEANUP — Merging Two Branches Into One (What We Did)
+
+**Problem:** Two local folders were pushing to the same GitHub repo on different branches:
+```
+go-web-app/           → main branch   (Go source only)
+devops_implementaion/ → master branch (DevOps files only)
+
+Result: 2 locations to edit, easy to push to wrong branch, Jenkins confused
+```
+
+**Solution:** Merge into one unified structure under `main` branch.
+
+### Step 1 — Change GitHub default branch from `master` → `main`
+```
+GitHub → repo Settings → Branches → Default branch → switch to main → Update
+```
+> ⭐ GitHub won't let you delete the default branch via CLI. Must change it in UI first.
+
+### Step 2 — Delete the old `master` branch from GitHub
+```bash
+git push origin --delete master
+# ❌ Will fail if master is still the default branch (do Step 1 first)
+```
+
+### Step 3 — Rename old local folder to avoid confusion
+```bash
+mv /home/srv/project_srv/devops_implementaion \
+   /home/srv/project_srv/devops_implementaion_OLD
+```
+
+### Step 4 — Fix Vagrantfile synced_folder paths
+The Vagrantfile moved from:
+```
+devops_implementaion/jenkins_vagrant_server/Vagrantfile   (old)
+go-web-app/devops_implementaion/jenkins_vagrant_server/Vagrantfile  (new)
+```
+Relative paths changed:
+```ruby
+# OLD (from devops_implementaion/jenkins_vagrant_server/):
+config.vm.synced_folder "../../go-web-app",  "/home/vagrant/go-web-app"  ← was correct
+config.vm.synced_folder "../",               "/home/vagrant/devops"      ← correct
+
+# NEW (from go-web-app/devops_implementaion/jenkins_vagrant_server/):
+config.vm.synced_folder "../../",  "/home/vagrant/go-web-app"  ← go up 2 = go-web-app/ root
+config.vm.synced_folder "../",     "/home/vagrant/devops"      ← unchanged ✅
+```
+
+### Step 5 — Push and verify
+```bash
+cd /home/srv/project_srv/go-web-app
+git add devops_implementaion/jenkins_vagrant_server/Vagrantfile
+git commit -m "fix: update synced_folder paths for new repo structure"
+git push origin main
+```
+
+### Where to run vagrant going forward
+```bash
+# NEW location (use this for all future vagrant operations)
+cd /home/srv/project_srv/go-web-app/devops_implementaion/jenkins_vagrant_server
+vagrant up / halt / ssh / destroy
+
+# NOTE: The EXISTING running VM's .vagrant state is still in:
+# devops_implementaion_OLD/jenkins_vagrant_server/.vagrant/
+# For the already-running VM, run vagrant commands from OLD location
+# When you recreate the VM, use the NEW location
+```
+
+### Final clean structure
+```
+/home/srv/project_srv/
+├── go-web-app/                    → main branch (ONE source of truth ✅)
+│   ├── main.go
+│   ├── go.mod
+│   ├── main_test.go
+│   ├── static/
+│   └── devops_implementaion/      ← ALL DevOps files here
+│       ├── Jenkinsfile
+│       ├── Dockerfile
+│       ├── jenkins_vagrant_server/
+│       ├── helm/
+│       ├── k8s/
+│       ├── flow_and_commands.md
+│       ├── pipeline_plan.md
+│       └── NOTES.md
+├── devops_implementaion_OLD/      ← archived, don't edit
+└── go-web-app-devops/             ← teacher's repo, reference only
+```
 
 ---
 
@@ -628,7 +806,7 @@ echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --passwo
 
 We track the last pushed Docker image version in:
 ```
-/home/vagrant/devops/docker_build_vagrant_server/.docker_version
+/var/lib/jenkins/.docker_version
 ```
 
 Contains just the version string, e.g.: `v1.4`
@@ -637,6 +815,9 @@ Jenkins auto-increments minor version each run:
 ```
 v1.3 → v1.4 → v1.5...
 ```
+
+> ⚠️ This file is stored OUTSIDE the Jenkins workspace (`/var/lib/jenkins/`) so that
+> `git checkout` during pipeline runs does NOT reset/wipe it between builds.
 
 ---
 
@@ -787,7 +968,7 @@ Under **Pipeline** section:
 | SCM | Git |
 | Repository URL | `git@github.com:rishu4u/go-web-app.git` |
 | Credentials | `github-ssh` (the one you added in step 3.2) |
-| Branch | `*/master` (or `*/main`) |
+| Branch | `*/main` |
 | Script Path | `devops_implementaion/Jenkinsfile` |
 
 > ⭐ Repository URL MUST be the **SSH URL** (`git@github.com:...`)
@@ -801,10 +982,12 @@ Under **Pipeline** section:
 | Thing | Value |
 |---|---|
 | Jenkins Web UI | `http://192.168.56.12:8080` |
+| Also accessible at | `http://localhost:9090` (port-forwarded to host) |
 | Jenkins home dir | `/var/lib/jenkins/` |
 | Jenkins SSH dir | `/var/lib/jenkins/.ssh/` |
-| Credentials file | `/var/lib/jenkins/dockerhub_creds.env` |
-| Version tracker | `/home/vagrant/devops/docker_build_vagrant_server/.docker_version` |
+| DockerHub creds file | `/var/lib/jenkins/dockerhub_creds.env` |
+| Version tracker file | `/var/lib/jenkins/.docker_version` |
+| Pipeline workspace | `/var/lib/jenkins/workspace/go-web-app/` |
 
 ---
 
@@ -815,46 +998,56 @@ pipeline {
   agent any    // run on any available Jenkins agent
 
   environment {
-    APP_DIR      = "/home/vagrant/go-web-app"      // Go source code
-    DEVOPS_DIR   = "/home/vagrant/devops"           // Jenkinsfile, Dockerfile, Helm
-    VERSION_FILE = "${DEVOPS_DIR}/docker_build_vagrant_server/.docker_version"
-    HELM_VALUES  = "${DEVOPS_DIR}/helm/go-web-app-chart/values.yaml"
-    CREDS_FILE   = "/var/lib/jenkins/dockerhub_creds.env"
+    // WORKSPACE = /var/lib/jenkins/workspace/go-web-app  (Jenkins' own git checkout)
+    // Jenkins runs as 'jenkins' OS user — NOT vagrant. WORKSPACE is fully accessible.
+    APP_DIR      = "${WORKSPACE}"                              // Go source at repo root
+    DEVOPS_DIR   = "${WORKSPACE}/devops_implementaion"         // DevOps files subfolder
+    VERSION_FILE = "/var/lib/jenkins/.docker_version"          // OUTSIDE workspace (persists between builds)
+    HELM_VALUES  = "${WORKSPACE}/devops_implementaion/helm/go-web-app-chart/values.yaml"
+    CREDS_FILE   = "/var/lib/jenkins/dockerhub_creds.env"     // DockerHub login (never in git)
     GO_BIN       = "/usr/local/go/bin"
   }
 
   stages {
 
     stage('Checkout') { ... }
-    // Jenkins already checks out the repo (configured in job settings)
+    // Jenkins clones git@github.com:rishu4u/go-web-app.git into WORKSPACE
+    // The synced folder /home/vagrant/devops is COMPLETELY IGNORED by Jenkins
 
     stage('Test') {
       sh "cd ${APP_DIR} && go test ./..."
+      // APP_DIR = WORKSPACE = repo root = has main.go + go.mod ✅
     }
 
     stage('Version Tag') {
-      // Reads last version from VERSION_FILE (e.g. v1.3)
-      // Suggests v1.4 (auto-increment minor)
-      // Shows input() dialog — user can accept or type custom tag
+      // 1. Reads VERSION_FILE → e.g. v1.0 (or defaults to v1.0 if file missing)
+      // 2. Suggests v1.1 (auto-increments minor)
+      // 3. Pipeline PAUSES — shows input dialog in Jenkins UI
+      // 4. User accepts suggested tag or types custom one → clicks Proceed
     }
 
     stage('Docker Build') {
       sh "docker build -f ${DEVOPS_DIR}/Dockerfile -t ${IMAGE_TAG} ${APP_DIR}"
+      // Dockerfile is in devops_implementaion/ subfolder
+      // Build context is repo root (has main.go, go.mod, static/)
     }
 
     stage('Push to DockerHub?') {
-      input(message: "Push to DockerHub?", ok: "Yes, Push It!")
-      // Human approval gate — pipeline pauses here
+      input(message: "Push saurabhhub1/go-web-app:v1.1 to DockerHub?", ok: "Yes, Push It!")
+      // Pipeline PAUSES — human approval gate
     }
 
     stage('Docker Push') {
-      // Loads creds from CREDS_FILE
-      // docker login → docker push
+      // Loads DOCKERHUB_USERNAME + DOCKERHUB_TOKEN from /var/lib/jenkins/dockerhub_creds.env
+      // Non-interactive login: echo "$TOKEN" | docker login --password-stdin
+      // Then: docker push saurabhhub1/go-web-app:v1.1
+      // Saves new version to VERSION_FILE after successful push
     }
 
     stage('Update Helm Tag') {
       sh "sed -i 's/tag: .*/tag: \"${IMAGE_VERSION}\"/' ${HELM_VALUES}"
-      // Updates image tag in values.yaml for GitOps/Argo CD
+      // Updates helm/go-web-app-chart/values.yaml with new image tag
+      // This enables GitOps / Argo CD to detect and deploy the new version
     }
   }
 }
@@ -862,7 +1055,163 @@ pipeline {
 
 ---
 
-## 3.7  JENKINS GOTCHAS WE HIT
+## 3.7  KEY CONCEPT — Jenkins WORKSPACE vs Synced Folder
+
+This is the most important thing to understand to avoid confusion:
+
+```
+What you might think Jenkins reads:
+  /home/vagrant/devops/Jenkinsfile      ← Vagrant synced folder
+           ❌ WRONG — Jenkins never touches this
+
+What Jenkins ACTUALLY does:
+  git clone git@github.com:rishu4u/go-web-app.git
+         ↓
+  /var/lib/jenkins/workspace/go-web-app/    ← Jenkins' OWN checkout
+         ↓
+  Reads Jenkinsfile from HERE
+```
+
+| Location | Who uses it | Purpose |
+|---|---|---|
+| `/home/vagrant/devops/` | You (editing) | Synced from host, convenient for editing |
+| `/var/lib/jenkins/workspace/go-web-app/` | Jenkins | Fresh git clone every build, uses this |
+
+**Consequence:** To update what Jenkins runs, you must:
+1. Edit file on HOST → `git push` to GitHub → Jenkins picks it up on next Build Now
+2. You do NOT need to do anything on the Vagrant VM for Jenkins to get the new file
+
+**Why Jenkins runs as `jenkins` user (not `vagrant`):**
+- `jenkins` OS user owns `/var/lib/jenkins/workspace/` — full access ✅
+- `jenkins` user has NO access to `/home/vagrant/` — permission denied ❌
+- This is why hardcoded `/home/vagrant/` paths in Jenkinsfile fail
+- Solution: use `${WORKSPACE}` which always points to Jenkins' own checkout
+
+---
+
+## 3.8  HOW TO INTERACT WITH PIPELINE INPUT PROMPTS
+
+The pipeline pauses at two stages waiting for human input:
+
+### Stage 3 — Version Tag input
+
+```
+Jenkins UI shows:
+┌─────────────────────────────────────────────────────┐
+│  Last build: v1.0  |  Suggested next tag: v1.1      │
+│  VERSION: [ v1.1                              ]     │
+│           [ Proceed ]    [ Abort ]                  │
+└─────────────────────────────────────────────────────┘
+```
+
+- **Accept suggestion** → just click **Proceed** (keeps v1.1)
+- **Override** → clear the box, type your own (e.g. v2.0) → click **Proceed**
+- **Cancel** → click **Abort** (pipeline stops cleanly)
+
+### Stage 5 — DockerHub push approval
+
+```
+Push saurabhhub1/go-web-app:v1.1 to DockerHub?
+[ Yes, Push It! ]    [ Abort ]
+```
+
+### How to find the input prompt in Jenkins UI
+
+```
+Jenkins → go-web-app job → Build #N (currently running)
+  → Look for "Paused for Input" link in left sidebar
+  OR
+  → In Stage View, hover over the paused stage → click the prompt icon
+```
+
+> ⚠️ Jenkins waits indefinitely — pipeline won't timeout unless you configured a timeout.
+
+---
+
+## 3.9  DOCKERHUB CREDENTIALS — FULL FLOW
+
+```
+Where credentials come from:
+
+  host: export DOCKERHUB_USERNAME=saurabhhub1
+        export DOCKERHUB_TOKEN=dckr_pat_xxxxx
+              │
+              │  vagrant up (Vagrantfile passes env vars to provision script)
+              ▼
+  VM:   /var/lib/jenkins/dockerhub_creds.env
+        DOCKERHUB_USERNAME=saurabhhub1
+        DOCKERHUB_TOKEN=dckr_pat_xxxxx
+        (chmod 600, owned by jenkins user)
+              │
+              │  Jenkins pipeline reads this file at Docker Push stage
+              ▼
+  Pipeline:   export $(grep -v '^#' /var/lib/jenkins/dockerhub_creds.env | xargs)
+              echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin
+              docker push saurabhhub1/go-web-app:v1.1
+```
+
+**Why non-interactive login (`--password-stdin`)?**
+Jenkins pipeline runs non-interactively — there's no terminal to type a password.
+Piping the token via stdin is the secure, automated way.
+
+**If creds file is missing or wrong:**
+```bash
+# On Jenkins VM — recreate the file
+sudo bash -c 'cat > /var/lib/jenkins/dockerhub_creds.env << EOF
+DOCKERHUB_USERNAME=saurabhhub1
+DOCKERHUB_TOKEN=your_new_token_here
+EOF'
+sudo chmod 600 /var/lib/jenkins/dockerhub_creds.env
+sudo chown jenkins:jenkins /var/lib/jenkins/dockerhub_creds.env
+
+# Verify
+sudo cat /var/lib/jenkins/dockerhub_creds.env
+```
+
+---
+
+## 3.10  UNIFIED REPO STRUCTURE — WHY WE DID IT
+
+Originally, Go source and DevOps files were in **separate local folders on different branches**:
+```
+❌ BEFORE (broken):
+  go-web-app/          → main branch   (Go source only)
+  devops_implementaion/ → master branch (DevOps files only)
+
+  Jenkins checked out master → no go.mod → go test FAILED
+```
+
+Fix — merged everything into ONE branch:
+```
+✅ AFTER (working):
+  go-web-app/                    → main branch
+  ├── main.go
+  ├── go.mod
+  ├── main_test.go
+  ├── static/
+  └── devops_implementaion/       ← DevOps files AS SUBFOLDER
+      ├── Jenkinsfile
+      ├── Dockerfile
+      └── helm/
+
+  Jenkins checks out main → has both go.mod AND Jenkinsfile ✅
+```
+
+How it was done:
+```bash
+cp -r /home/srv/project_srv/devops_implementaion \
+      /home/srv/project_srv/go-web-app/devops_implementaion
+cd /home/srv/project_srv/go-web-app
+git add devops_implementaion/
+git commit -m "feat: unify repo structure"
+git pull --rebase origin main
+git push origin main
+```
+Then Jenkins job was updated: Branch `*/main`, Script Path `devops_implementaion/Jenkinsfile`
+
+---
+
+## 3.11  JENKINS GOTCHAS WE HIT
 
 ### ❌ Jenkins pulling from synced folder path instead of GitHub
 
@@ -996,28 +1345,59 @@ vagrant provision jenkins_vagrant_server
 #  KEY POINTS SUMMARY — DON'T FORGET
 # ═══════════════════════════════════════════
 
+## Pipeline Status — First Successful Run ✅
+
+```
+✅ Checkout      — cloned rishu4u/go-web-app (main) into WORKSPACE
+✅ Test          — go test ./...  PASSED
+✅ Version Tag   — user entered v1.1 → pipeline continued
+✅ Docker Build  — saurabhhub1/go-web-app:v1.1 built on Jenkins VM
+✅ Approval      — user clicked "Yes, Push It!"
+✅ Docker Push   — image pushed to DockerHub
+✅ Helm Update   — values.yaml updated with tag v1.1
+
+docker pull saurabhhub1/go-web-app:v1.1  ← this image is now live!
+```
+
+---
+
 ## SSH Key Distribution — Who Gets What
 
 | Key Type | Source | Goes To |
 |---|---|---|
 | Jenkins user **PUBLIC** key | `/var/lib/jenkins/.ssh/id_ed25519.pub` | GitHub Settings → SSH Keys |
-| Jenkins user **PRIVATE** key | `/var/lib/jenkins/.ssh/id_ed25519` | Jenkins GUI → Credentials |
+| Jenkins user **PRIVATE** key | `/var/lib/jenkins/.ssh/id_ed25519` | Jenkins GUI → Credentials (ID: `github-ssh`) |
 | Vagrant user **PUBLIC** key | `~/.ssh/id_ed25519.pub` (on vagrant VM) | GitHub Settings → SSH Keys |
 | Laptop user **PUBLIC** key | `~/.ssh/id_ed25519.pub` (on laptop) | GitHub Settings → SSH Keys |
+
+---
 
 ## Quick "Is It Working?" Checklist
 
 ```bash
 # On any machine before pushing:
 ssh -T git@github.com          # ✅ should say Hi rishu4u!
-git remote -v                  # ✅ should show YOUR repo URL
+git remote -v                  # ✅ should show YOUR repo SSH URL
 git config user.name           # ✅ should show your name
 
 # On Jenkins VM, as jenkins user:
 sudo -u jenkins ssh -T git@github.com     # ✅ should say Hi rishu4u!
-sudo -u jenkins docker ps                 # ✅ should not say permission denied
+sudo -u jenkins docker ps                 # ✅ no permission denied
+sudo cat /var/lib/jenkins/dockerhub_creds.env   # ✅ creds present
 ```
 
 ---
 
-*Last updated: 2026-04-06 — Git flows, Docker commands, Jenkins pipeline + SSH key setup*
+## Before Every Build — Mental Checklist
+
+| Check | Command |
+|---|---|
+| Did you push latest Jenkinsfile changes? | `git push origin main` (from host) |
+| Is Jenkins job on right branch? | Job config → `*/main` |
+| Is Script Path correct? | `devops_implementaion/Jenkinsfile` |
+| DockerHub creds on Jenkins VM? | `sudo cat /var/lib/jenkins/dockerhub_creds.env` |
+| Jenkins SSH → GitHub working? | `sudo -u jenkins ssh -T git@github.com` |
+
+---
+
+*Last updated: 2026-04-07 — First pipeline run succeeded! saurabhhub1/go-web-app:v1.1 ✅*
