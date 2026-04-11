@@ -171,17 +171,45 @@ pipeline {
     }
 
     // ----------------------------------------------------------
-    // Stage 7: Update Helm values.yaml
+    // Stage 7: Update Helm Tag + Git Push from Jenkins VM
     // ----------------------------------------------------------
     stage('Update Helm Tag') {
       steps {
         echo "=== Bumping image tag in Helm values.yaml ==="
         sh """
-          sed -i 's/tag: .*/tag: "${env.IMAGE_VERSION}"/' ${HELM_VALUES}
+          sed -i 's/tag: .*/tag: \"${env.IMAGE_VERSION}\"/' ${HELM_VALUES}
           grep 'tag:' ${HELM_VALUES}
         """
         echo "Helm values.yaml updated to tag: ${env.IMAGE_VERSION}"
-        echo "Commit and push this file to Git to trigger Argo CD sync."
+
+        // Push the Helm tag update from the Jenkins VM itself
+        // Prerequisites:
+        //   1. jenkins user SSH key added to GitHub  (done in Section 3.2 of flow_and_commands.md)
+        //   2. git config user.name/email set for jenkins user (done below)
+        sh """
+          cd ${APP_DIR}
+
+          # Configure git identity for jenkins user (one-time-ish, safe to re-run)
+          git config user.email "jenkins-bot@go-web-app.local"
+          git config user.name  "Jenkins CI"
+
+          # Make sure we are on main and up-to-date before committing
+          git fetch origin
+          git checkout main
+          git pull --rebase origin main
+
+          # Stage only the values.yaml that was updated
+          git add ${HELM_VALUES}
+
+          # Commit (if nothing changed this is a no-op, --allow-empty prevents failure)
+          git diff --cached --quiet || \
+            git commit -m "ci: update Helm image tag to ${env.IMAGE_VERSION} [skip ci]"
+
+          # Push back to GitHub using the jenkins SSH key
+          git push origin main
+        """
+
+        echo "✅ Helm values.yaml committed and pushed → GitHub → ArgoCD will auto-sync."
       }
     }
 

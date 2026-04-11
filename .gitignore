@@ -20,3 +20,16 @@
 # Go workspace file
 go.work
 go.work.sum
+
+# Vagrant state (never commit — machine-specific)
+.vagrant/
+
+# Terraform state (contains secrets — use remote state instead)
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Secret/credentials files
+*.env
+dockerhub_creds.env

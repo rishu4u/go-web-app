@@ -1401,3 +1401,167 @@ sudo cat /var/lib/jenkins/dockerhub_creds.env   # ✅ creds present
 ---
 
 *Last updated: 2026-04-07 — First pipeline run succeeded! saurabhhub1/go-web-app:v1.1 ✅*
+
+---
+
+---
+
+# ═══════════════════════════════════════════
+#  SECTION 5 — PHASE 2: TERRAFORM + AWS
+# ═══════════════════════════════════════════
+
+## 5.1  WHERE TERRAFORM RUNS
+
+Terraform is installed on the **Jenkins Vagrant VM** (not host laptop).
+This means eventually Jenkins can trigger Terraform as part of the pipeline.
+
+```
+Jenkins Vagrant VM (192.168.56.12)
+├── Jenkins         ✅ CI — build, test, push Docker image
+├── AWS CLI         ✅ authenticate to AWS
+├── Terraform       ✅ provision EC2, VPC, Security Groups
+└── kubectl         🔲 manage K8s cluster (Phase 4)
+```
+
+---
+
+## 5.2  AWS IAM SETUP (one-time, in browser)
+
+```
+1. AWS Console → IAM → Users → Create User
+   Name: terraform-devops
+
+2. Permissions → Attach policy: AdministratorAccess
+   (scope down to least privilege once project is stable)
+
+3. After creation → Security Credentials tab
+   → Create Access Key → CLI use case
+   → Copy Access Key ID + Secret Access Key (treat like passwords!)
+
+⚠️ NEVER paste credentials into chat, Git commits, or Slack.
+   Store them only in: ~/.aws/credentials  (on the machine that needs them)
+```
+
+---
+
+## 5.3  INSTALL AWS CLI (on Jenkins Vagrant VM)
+
+```bash
+# Download and install
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+# Verify
+aws --version
+# Expected: aws-cli/2.x.x Python/3.x.x Linux/...
+```
+
+---
+
+## 5.4  INSTALL TERRAFORM (on Jenkins Vagrant VM)
+
+```bash
+# Add HashiCorp GPG key and repo
+wget -O- https://apt.releases.hashicorp.com/gpg | \
+  sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+  https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+  sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+sudo apt update && sudo apt install -y terraform
+
+# Verify
+terraform --version
+# Expected: Terraform v1.14.8
+```
+
+---
+
+## 5.5  CONFIGURE AWS CLI
+
+```bash
+aws configure
+# AWS Access Key ID:     <your-key-id>
+# AWS Secret Access Key: <your-secret-key>
+# Default region name:   us-east-1
+# Default output format: json
+
+# Credentials are saved to:
+# ~/.aws/credentials   ← actual keys
+# ~/.aws/config        ← region + output format
+
+# Verify — shows your IAM user identity
+aws sts get-caller-identity
+# Expected output:
+# {
+#     "UserId": "AIDAXXXXXX",
+#     "Account": "505609702814",
+#     "Arn": "arn:aws:iam::505609702814:user/terraform-devops"
+# }
+```
+
+> ⚠️ `~/.aws/credentials` contains real keys. Never commit this file to Git.
+> It is user-specific and should stay on the machine only.
+
+---
+
+## 5.6  TERRAFORM COMMANDS — CORE WORKFLOW
+
+```bash
+terraform init      # download providers (AWS plugin) — run once per new directory
+terraform plan      # preview: what will be CREATED / CHANGED / DESTROYED
+terraform apply     # actually create the infrastructure (prompts "yes" to confirm)
+terraform destroy   # tear down ALL resources created by this config
+terraform output    # show outputs (EC2 IPs, ALB DNS, etc.) after apply
+terraform show      # show current state
+terraform state list  # list all resources in state
+```
+
+---
+
+## 5.7  TERRAFORM FILE STRUCTURE (our project)
+
+```
+devops_implementaion/terraform/
+├── main.tf              ← AWS provider + EC2 instances
+├── vpc.tf               ← VPC, subnets, internet gateway, route table
+├── security_groups.tf   ← firewall rules (which ports open to whom)
+├── variables.tf         ← input variable declarations
+├── outputs.tf           ← what to print after apply (EC2 IPs, etc.)
+└── terraform.tfvars     ← actual variable values (gitignored! has secrets)
+```
+
+---
+
+## 5.8  AWS INFRASTRUCTURE WE'LL BUILD
+
+```
+AWS us-east-1
+└── VPC (10.0.0.0/16)
+    ├── Public Subnet (10.0.1.0/24) — us-east-1a
+    │   └── Internet Gateway → Route Table
+    ├── EC2 — K8s Master Node (t3.medium: 2 vCPU, 4GB)
+    │   └── Security Group: allow 22, 6443, 8080
+    └── EC2 — K8s Worker Node (t3.medium: 2 vCPU, 4GB)
+        └── Security Group: allow 22, 80, 8080
+
+Key Pair: terraform-key (SSH access to EC2 instances)
+```
+
+---
+
+## 5.9  KEY GOTCHA — AWS CREDENTIALS SECURITY
+
+| ✅ Safe | ❌ Never do |
+|---|---|
+| `~/.aws/credentials` on the machine | Hardcode in `.tf` files |
+| Environment variables (`AWS_ACCESS_KEY_ID`) | Paste in chat or email |
+| AWS IAM roles (best for production) | Commit to Git |
+| Terraform `tfvars` in `.gitignore` | Share access key + secret together |
+
+---
+
+*Last updated: 2026-04-10 — Phase 2 started: AWS CLI + Terraform installed on Jenkins VM ✅*
+
