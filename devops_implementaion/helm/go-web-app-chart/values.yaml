@@ -4,8 +4,7 @@
 replicaCount: 1
 
 image:
-  # TODO: replace with your DockerHub username
-  repository: <your-dockerhub-username>/go-web-app
+  repository: saurabhhub1/go-web-app
   pullPolicy: IfNotPresent
   tag: "latest"
 

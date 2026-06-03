@@ -29,9 +29,9 @@ variable "availability_zone" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type (t3.medium = 2 vCPU, 4GB — minimum for K8s)"
+  description = "EC2 instance type — t2.micro (1 vCPU, 1GB) works with k3s (lightweight K8s). Free tier eligible."
   type        = string
-  default     = "t3.medium"
+  default     = "t2.micro"
 }
 
 variable "ami_id" {

@@ -77,7 +77,7 @@ The script runs once when you do `vagrant up` (or `vagrant provision`).
 cd /home/srv/project_srv/devops_implementaion/jenkins_vagrant_server
 
 # Step 2 — Export DockerHub credentials (so provisioner can save them)
-export DOCKERHUB_USERNAME=rishu4u
+export DOCKERHUB_USERNAME=saurabhhub1
 export DOCKERHUB_TOKEN=your_dockerhub_access_token
 
 # Step 3 — Spin up the VM (downloads box + runs provision script — takes ~5-10 min first time)

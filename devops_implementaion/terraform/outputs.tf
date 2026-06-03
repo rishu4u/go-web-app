@@ -9,7 +9,7 @@ output "k8s_worker_public_ip" {
 }
 
 output "k8s_master_private_ip" {
-  description = "Private IP of master (used for kubeadm join command)"
+  description = "Private IP of master (used for k3s agent join command)"
   value       = aws_instance.k8s_master.private_ip
 }
 

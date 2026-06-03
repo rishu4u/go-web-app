@@ -53,8 +53,8 @@ resource "aws_instance" "k8s_master" {
   associate_public_ip_address = true
 
   root_block_device {
-    volume_size = 20   # GB — enough for K8s + Docker images
-    volume_type = "gp3"
+    volume_size = 12   # GB — free tier gives 30GB total; 12+12=24GB stays within limit
+    volume_type = "gp2"  # gp2 is free tier eligible; gp3 is not
   }
 
   tags = {
@@ -76,8 +76,8 @@ resource "aws_instance" "k8s_worker" {
   associate_public_ip_address = true
 
   root_block_device {
-    volume_size = 20
-    volume_type = "gp3"
+    volume_size = 12   # 12GB worker + 12GB master = 24GB total (within 30GB free tier)
+    volume_type = "gp2"
   }
 
   tags = {

@@ -28,13 +28,13 @@ Developer pushes code
 ┌──────────────────────────────────────────────────────────────────┐
 │  PHASE 2 — INFRASTRUCTURE (AWS)                       🔲 NEXT   │
 │                                                                  │
-│  Terraform provisions:                                           │
-│    EC2 instances (for K8s nodes)                                 │
+│  Terraform provisions (FREE TIER — t2.micro + gp2):             │
+│    2x EC2 t2.micro (master + worker) — free tier eligible        │
+│    12GB gp2 EBS each (24GB total, within 30GB free limit)        │
 │    Security Groups (firewall rules)                              │
 │    Key Pairs (SSH access)                                        │
-│    Application Load Balancer (ALB)                               │
-│    Route 53 DNS (domain → ALB)                                   │
 │    VPC + Subnets + Internet Gateway                              │
+│    NOTE: Using k3s (not kubeadm) — runs on 1GB RAM              │
 └──────────────────────────────────────────────────────────────────┘
         │
         ▼
@@ -218,11 +218,13 @@ No agent needed — Ansible only requires SSH access.
 ### What Ansible Will Do
 ```
 Ansible Playbooks:
-├── install_docker.yml     → install Docker CE on EC2
-├── install_k8s.yml        → install kubeadm, kubelet, kubectl
-├── setup_master.yml       → kubeadm init on master node
-├── join_workers.yml       → kubeadm join on worker nodes
-└── deploy_app.yml         → deploy go-web-app via Helm
+├── install_k3s_master.yml → install k3s server on master EC2
+├── join_workers.yml       → install k3s agent on worker, join cluster
+└── verify_cluster.yml     → confirm nodes are Ready
+
+NOTE: Using k3s (not kubeadm) — lightweight K8s that runs on t2.micro (1GB RAM).
+Same kubectl commands. Same Helm. Same ArgoCD. Same Prometheus.
+k3s = full K8s minus the heavy components that consume RAM on the control plane.
 ```
 
 ---
