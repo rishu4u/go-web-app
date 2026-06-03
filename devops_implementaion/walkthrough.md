@@ -1,4 +1,4 @@
-# DevOps Implementation — Walkthrough
+# DevOps Implementation — Walkthrough Guide
 
 ## What Was Built
 
