@@ -1,4 +1,4 @@
-# Go Web App — DevOps Notes & Command Reference
+# Go Web App — DevOps Notes & Command Reference:
 
 > This file is updated progressively as the project evolves.
 > Every command here was actually run and verified on the Jenkins Vagrant VM.
