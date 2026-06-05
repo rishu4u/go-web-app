@@ -33,3 +33,5 @@ go.work.sum
 # Secret/credentials files
 *.env
 dockerhub_creds.env
+
+devops_implementaion/jenkins_vagrant_server/login.txt
