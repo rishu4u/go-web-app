@@ -32,12 +32,12 @@ pipeline {
     HELM_VALUES     = "${WORKSPACE}/devops_implementaion/helm/go-web-app-chart/values.yaml"
     CREDS_FILE      = "/var/lib/jenkins/dockerhub_creds.env"
     GO_BIN          = "/usr/local/go/bin"
-  }
+  }  
 
   stages {
 
     // ----------------------------------------------------------
-    // Stage 1: Checkout
+    // Stage 1: Checkout       
     // ----------------------------------------------------------
     stage('Checkout') {
       steps {
@@ -50,7 +50,7 @@ pipeline {
     }
 
     // ----------------------------------------------------------
-    // Stage 2: Run Go Tests
+    // Stage 2: Run Go Tests     
     // ----------------------------------------------------------
     stage('Test') {
       steps {
@@ -64,7 +64,7 @@ pipeline {
     }
 
     // ----------------------------------------------------------
-    // Stage 3: Version Tag Management
+    // Stage 3: Version Tag Management     
     // ----------------------------------------------------------
     stage('Version Tag') {
       steps {

@@ -1,8 +1,37 @@
 # DevOps — Complete Flow & Commands Reference
 
-> **Purpose:** Learning + revision cheatsheet.
-> Every command here was actually run on this project (Go web app CI/CD pipeline).
-> Covers: Git → Docker → Jenkins (more tools added as we go).
+> **Purpose:** Command cheatsheet for this project.
+> One section per tool. Each section has: mental model → daily commands → gotchas.
+> Jump to the section you need using the Table of Contents below.
+
+---
+
+## TABLE OF CONTENTS
+
+| Section | Tool | What's in it |
+|---|---|---|
+| [Section 0](#section-0--jenkins-server-setup-vagrant) | Vagrant / Jenkins VM | `vagrant up`, provision, key paths, daily VM commands |
+| [Section 1](#section-1--git) | Git | SSH setup, daily workflow, undo everything, stash, fetch vs pull, gotchas |
+| [Section 2](#section-2--docker) | Docker | Build, run, push, DockerHub login, version tracking |
+| [Section 3](#section-3--jenkins) | Jenkins | Pipeline stages, SSH keys, credentials, Jenkinsfile explained, gotchas |
+| [Section 4](#section-4--vagrant-quick-ref) | Vagrant | Quick command reference |
+| [Section 5](#section-5--phase-2-terraform--aws) | Terraform + AWS | Install, AWS CLI setup, `terraform apply` workflow |
+
+### Git quick-jump
+
+| What you want | Subsection |
+|---|---|
+| SSH key setup | [1.3](#13--ssh-key-setup) |
+| Daily add/commit/push | [1.4](#14--daily-git-workflow) |
+| The 4 git areas (mental model) | [1.4b](#14b--the-4-git-areas) |
+| Reading `git status` output | [1.4c](#14c--reading-git-status-output) |
+| `git diff` / `git diff --staged` | [1.4d](#14d--seeing-what-changed) |
+| Undo anything (restore, reset, revert) | [1.4e](#14e--undoing-things--every-scenario) |
+| git stash / stash pop | [1.4f](#14f--stash--save-work-temporarily) |
+| git fetch vs git pull | [1.4g](#14g--syncing-with-remote--pull-vs-fetch) |
+| Scenario flows (clone, new repo, daily push) | [1.5](#15--scenario-flows) |
+| Rollback visual summary | [1.7](#17--rollback-commands) |
+| All git gotchas | [1.9](#19--git-gotchas-we-hit) |
 
 ---
 
@@ -207,7 +236,7 @@ sudo -u jenkins ssh -T git@github.com
 ```bash
 # Set your identity (labels on commits)
 git config --global user.name  "rishu4u"
-git config --global user.email "your@email.com"
+git config --global user.email "rishusaurabh4u@gmail.com"
 
 # Verify
 git config --global user.name
@@ -251,6 +280,265 @@ ssh -T git@github.com
 git add .                          # stage all changes
 git commit -m "describe what changed"
 git push                           # push staged commits to GitHub
+```
+
+---
+
+## 1.4b  THE 4 GIT AREAS — Mental Model Behind Every Command
+
+```
+Working Directory  →  Staging Area  →  Local Repo  →  GitHub (Remote)
+(files on disk)       (git add)        (git commit)    (git push)
+
+git restore <file>     ←──────────────────────────────────────────────
+discard disk changes
+
+                       git restore --staged <file>  ←─────────────────
+                       unstage (move back to working dir)
+```
+
+Every git command moves things between these 4 areas:
+
+| Command | What it does | Areas involved |
+|---|---|---|
+| `git add <file>` | Stage a file | working dir → staging |
+| `git commit` | Commit staged snapshot | staging → local repo |
+| `git push` | Upload commits | local repo → GitHub |
+| `git pull` | Download + merge | GitHub → local repo |
+| `git fetch` | Download only (no merge) | GitHub → local repo |
+| `git restore <file>` | Discard unstaged changes | (erases working dir edits) |
+| `git restore --staged <file>` | Unstage a file | staging → working dir |
+| `git stash` | Shelve current work | working dir → stash shelf |
+| `git stash pop` | Restore shelved work | stash shelf → working dir |
+
+---
+
+## 1.4c  READING `git status` OUTPUT — Line by Line
+
+```bash
+git status
+```
+
+Example output with every section explained:
+
+```
+On branch main
+Your branch is up to date with 'origin/main'.    ← local matches GitHub, nothing to push
+                                                   (if it says "1 commit ahead" → need to push)
+
+Changes to be committed:                          ← STAGED — will go into next git commit
+  (use "git restore --staged <file>..." to unstage)
+        modified:   main.go                       ← edited + git add was run
+        new file:   config.txt                    ← new file that was git add'd
+        deleted:    old.txt                       ← deleted file that was git add'd
+
+Changes not staged for commit:                    ← MODIFIED but NOT staged yet
+  (use "git add <file>..." to stage)
+  (use "git restore <file>..." to discard changes)
+        modified:   go.mod                        ← edited but git add not run
+
+Untracked files:                                  ← NEW files git has never seen
+  (use "git add <file>..." to include)
+        scratch.txt                               ← exists on disk, git ignores it
+```
+
+> ⭐ Only "Changes to be committed" goes into `git commit`. The other two sections are ignored.
+
+---
+
+## 1.4d  SEEING WHAT CHANGED — diff commands
+
+```bash
+# See changes NOT yet staged (working dir vs last commit)
+git diff
+
+# See changes that ARE staged (what will go into next commit)
+git diff --staged
+
+# See ALL changes (staged + unstaged) vs last commit
+git diff HEAD
+
+# See changes in one specific file
+git diff main.go
+
+# See what changed between two commits (use short SHAs from git log)
+git diff e482c75 49a5ecf
+
+# See what changed in the last commit
+git show HEAD
+git show HEAD --stat        # summary: filenames + lines added/removed
+```
+
+> ⭐ Rule of thumb:
+> - Before `git add` → use `git diff` (shows what's NOT staged yet)
+> - After `git add` → use `git diff --staged` (shows what WILL be committed)
+
+---
+
+## 1.4e  UNDOING THINGS — Every Scenario
+
+### Scenario 1 — Discard changes to a file (not staged yet)
+> "I edited a file but it's a mess — get back to the last committed version"
+```bash
+git restore main.go           # discard changes to one file
+git restore .                 # discard ALL unstaged changes (⚠️ no undo)
+```
+
+### Scenario 2 — Unstage a file (you did git add, but don't want it in the commit)
+> "I ran git add . but one file shouldn't go in this commit"
+```bash
+git restore --staged main.go  # unstage one file (changes stay on disk, just not staged)
+git restore --staged .        # unstage everything
+```
+
+### Scenario 3 — Fix the last commit message
+> "I committed but the message has a typo"
+```bash
+git commit --amend -m "correct message here"
+# ⚠️ Only if NOT yet pushed — rewrites history
+# If already pushed: git push --force-with-lease origin main
+```
+
+### Scenario 4 — Add a missed file to the last commit
+> "I committed but forgot to include one file"
+```bash
+git add forgotten_file.txt
+git commit --amend --no-edit    # adds file to last commit, same message
+# ⚠️ Only if NOT yet pushed
+```
+
+### Scenario 5 — Undo last commit, keep changes on disk
+> "I committed too early — want to re-do"
+```bash
+git reset --soft HEAD~1     # undo commit, keep changes staged
+git reset HEAD~1            # undo commit, keep changes but unstage them
+```
+
+### Scenario 6 — Undo last commit AND delete all changes
+> "I committed something wrong — erase it completely"
+```bash
+git reset --hard HEAD~1     # ⚠️ DESTRUCTIVE — changes are permanently gone
+```
+
+### Scenario 7 — Undo a commit already pushed to GitHub
+> "I pushed something wrong — can't rewrite history"
+```bash
+git revert HEAD             # creates a NEW commit that undoes the last one
+git push                    # push the revert commit — safe, no force needed
+```
+
+### Scenario 8 — Delete untracked files (scratch files git never tracked)
+```bash
+git clean -n        # dry run — shows what WOULD be deleted (safe to run)
+git clean -f        # actually deletes untracked files (⚠️ no undo)
+git clean -fd       # also deletes untracked directories
+```
+
+### Quick decision table
+
+| Situation | Command |
+|---|---|
+| Discard file changes (not staged) | `git restore <file>` |
+| Unstage a file | `git restore --staged <file>` |
+| Fix last commit message | `git commit --amend -m "new msg"` |
+| Undo last commit, keep staged | `git reset --soft HEAD~1` |
+| Undo last commit, keep unstaged | `git reset HEAD~1` |
+| Undo last commit, delete changes | `git reset --hard HEAD~1` ⚠️ |
+| Undo a pushed commit | `git revert HEAD` then `git push` |
+
+---
+
+## 1.4f  STASH — Save Work Temporarily
+
+> "I'm mid-edit but need to pull latest or switch tasks"
+
+```bash
+# Save current changes (both staged + unstaged) to a temporary shelf
+git stash
+
+# See what's on the stash shelf
+git stash list
+# Output: stash@{0}: WIP on main: e482c75 feat: sync all missing dirs
+
+# Restore stashed work (removes it from stash shelf)
+git stash pop
+
+# Restore without removing from shelf
+git stash apply
+
+# Restore a specific stash entry
+git stash apply stash@{1}
+
+# Delete stash without applying it
+git stash drop
+
+# Save with a label (useful when you stash often)
+git stash push -m "half-done terraform vars"
+```
+
+Common flow — teammate asks you to pull latest while you're mid-edit:
+```bash
+git stash                    # save your work
+git pull origin main         # get latest from GitHub
+git stash pop                # restore your work on top of latest
+```
+
+---
+
+## 1.4g  SYNCING WITH REMOTE — pull vs fetch
+
+```bash
+# Download changes from GitHub AND merge into current branch (most common)
+git pull
+
+# Download + rebase your local commits on top (cleaner history than merge)
+git pull --rebase origin main
+
+# Download changes from GitHub but DON'T merge yet (safe — lets you inspect first)
+git fetch origin
+
+# After fetch — see WHICH commits are on GitHub that you don't have yet
+git log HEAD..origin/main --oneline
+# Empty output = you're already up to date
+# Example output:
+#   abc1234 fix: update Helm tag
+#   def5678 docs: add terraform notes
+
+# After fetch — see the actual line-by-line file changes
+git diff HEAD origin/main
+
+# See a visual picture of where local vs remote branches are
+git log --oneline --graph --all
+# Example output:
+#   * abc1234 (origin/main) fix you made directly on GitHub
+#   * ec8a5da (HEAD -> main) All folders synced   ← your local is HERE
+# One line tells you: remote is 1 commit ahead, you need to pull
+
+# After fetch — merge manually when ready
+git merge origin/main
+
+# Clone a repo for the first time
+git clone git@github.com:rishu4u/go-web-app.git
+git clone git@github.com:rishu4u/go-web-app.git my-folder-name
+```
+
+`pull` vs `fetch` — when to use which:
+
+| | `git pull` | `git fetch` |
+|---|---|---|
+| Downloads remote changes | ✅ | ✅ |
+| Merges into your branch | ✅ automatic | ❌ you choose when |
+| Risk if you have local changes | ⚠️ can cause conflicts | ✅ zero risk |
+| When to use | Daily sync when clean | When you want to inspect before merging |
+
+Full safe flow when you have local edits AND remote has new commits:
+```bash
+git fetch origin                      # check what's on GitHub
+git log HEAD..origin/main --oneline   # see the remote commits
+git diff HEAD origin/main             # see the file changes
+git stash                             # shelf your local edits
+git pull                              # bring in remote changes cleanly
+git stash pop                         # restore your local edits on top
 ```
 
 ---
@@ -557,6 +845,44 @@ git push --force-with-lease origin main   # force needed since history was rewri
 
 > 💡 The actual pipeline credentials stay safe in `/var/lib/jenkins/dockerhub_creds.env`
 > which is NOT tracked by git — only `login.txt` (a notes file) had the issue.
+
+---
+
+### ❌ Divergent branches — "Need to specify how to reconcile"
+```
+fatal: Need to specify how to reconcile divergent branches.
+hint:   git config pull.rebase false  # merge
+hint:   git config pull.rebase true   # rebase
+hint:   git config pull.ff only       # fast-forward only
+```
+**Cause:** You committed locally AND someone (or you) pushed a different commit to GitHub
+from the same base. Both branches diverged — git doesn't know which order to put them in.
+
+```
+GitHub:  A → B → C   ← commit made directly on GitHub web
+Local:   A → B → D   ← commit made locally, not pushed yet
+Both branched from B — git doesn't know: should result be C→D or D→C?
+```
+
+**Fix — use rebase (cleanest):**
+```bash
+git pull --rebase origin main
+# Takes your local commit D and replays it ON TOP of GitHub's commit C
+# Result: A → B → C → D  (clean linear history)
+git push
+```
+
+**Permanent fix — set rebase as default so this error never appears again:**
+```bash
+git config --global pull.rebase true
+# Now bare 'git pull' always rebases automatically
+```
+
+| Option | What it does | Use when |
+|---|---|---|
+| `--rebase` | Replays your commits on top of remote | ✅ Solo projects — keeps history clean |
+| `--no-rebase` | Creates a merge commit | Teams — preserves exact history |
+| `--ff-only` | Refuses if diverged | Strict pipelines only |
 
 ---
 
@@ -991,65 +1317,382 @@ Under **Pipeline** section:
 
 ---
 
+## 3.5b  JENKINS BUILD TRIGGERS — HOW PIPELINE STARTS
+
+There are 3 ways Jenkins can start a build. Set in: **Job → Configure → Build Triggers**
+
+### Trigger 1 — Manual (Build Now)
+You click "Build Now" in the Jenkins UI. What we use for testing.
+
+### Trigger 2 — Poll SCM
+Jenkins checks GitHub on a schedule. If new commits are found → trigger build.
+
+```
+Jenkins Job → Configure → Build Triggers → Poll SCM
+Schedule: H/5 * * * *    ← check every 5 minutes
+
+Cron format: MIN HOUR DAY MONTH WEEKDAY
+H/5 * * * * = every 5 minutes (H = hash, spreads load across Jenkins jobs)
+```
+
+How it works:
+```
+Every 5 min: Jenkins asks GitHub "any new commits since I last checked?"
+    → No  → do nothing
+    → Yes → trigger build immediately
+```
+
+### Trigger 3 — GitHub Hook Trigger for GITScm Polling
+Jenkins listens for a webhook signal FROM GitHub. When GitHub pushes a notification → build triggers instantly.
+
+```
+GitHub push happens
+    → GitHub sends POST to: http://<jenkins-ip>:8080/github-webhook/
+    → Jenkins receives it → triggers build immediately
+```
+
+### Why webhook doesn't work on local Vagrant VM
+
+```
+Jenkins URL: http://192.168.56.12:8080   ← private IP, only exists on your laptop
+GitHub:      cannot reach 192.168.56.x   ← internet cannot reach private IPs
+Result:      webhook signal never arrives, trigger never fires
+```
+
+**Current setup:** "GitHub hook trigger" is ENABLED but does nothing (private IP).
+Poll SCM every 5 min is what actually triggers builds.
+
+**When you move to Phase 2 (Jenkins on EC2 with public IP):**
+- Configure GitHub webhook: repo Settings → Webhooks → Add webhook → `http://<ec2-ip>:8080/github-webhook/`
+- Turn off Poll SCM (wastes resources — webhook is instant)
+- Build triggers on every push, within seconds
+
+| Trigger | Works locally (Vagrant)? | Works on EC2 (AWS)? |
+|---|---|---|
+| Manual (Build Now) | ✅ | ✅ |
+| Poll SCM | ✅ (checks every 5 min) | ✅ (but wasteful) |
+| GitHub Webhook | ❌ (private IP) | ✅ (public IP) |
+
+---
+
 ## 3.6  OUR JENKINSFILE — PIPELINE STAGES EXPLAINED
+
+### What is `sh`?
+
+`sh` is a Jenkins pipeline step that runs a shell command on the agent machine (our Jenkins VM).
+It is NOT a Linux command — it is a Jenkins keyword that tells Jenkins: "run this in bash."
+
+```groovy
+sh "go test ./..."           // runs: bash -c "go test ./..."
+sh "docker build ..."        // runs: bash -c "docker build ..."
+
+// Multi-line version (triple-quote) — same thing, just cleaner for long commands
+sh """
+  export PATH=\$PATH:/usr/local/go/bin
+  cd /var/lib/jenkins/workspace/go-web-app
+  go test ./...
+"""
+```
+
+> Note: inside `sh """..."""`, the `$` for environment variables must be escaped as `\$`
+> to stop Jenkins from expanding them before bash sees them. Use `${VARIABLE}` (no backslash)
+> for Jenkins env vars you DO want expanded.
+
+---
+
+### What is `script`?
+
+`script` is a Jenkins step that lets you write Groovy code (logic, variables, conditionals)
+inside a declarative pipeline. Without it, you can only call steps — no `if`, no variables.
+
+```groovy
+// Without script — only simple steps allowed
+steps {
+  sh "go test ./..."
+  echo "done"
+}
+
+// With script — full Groovy logic
+steps {
+  script {
+    def version = readFile("/var/lib/jenkins/.docker_version").trim()
+    if (version == "") {
+      version = "v1.0"
+    }
+    env.IMAGE_VERSION = version
+  }
+}
+```
+
+---
+
+### What is `agent any` — and what are the alternatives?
+
+`agent` tells Jenkins WHERE to run the pipeline (which machine / container).
+
+| Value | Meaning | When to use |
+|---|---|---|
+| `agent any` | Run on any available Jenkins node | ✅ Our setup — single Jenkins VM |
+| `agent none` | No global agent — each stage defines its own | When different stages need different environments |
+| `agent { label 'linux' }` | Run only on nodes tagged 'linux' | Multi-node Jenkins cluster |
+| `agent { docker 'golang:1.22' }` | Run inside a Docker container | Clean isolated builds without installing Go on Jenkins |
+| `agent { kubernetes { ... } }` | Run inside a K8s pod | Large-scale Jenkins on Kubernetes |
+
+In our project `agent any` works because we have one Jenkins VM and it has everything installed (Go, Docker, Git).
+
+If we used `agent { docker 'golang:1.22' }` instead — Jenkins would spin up a fresh Go container for each build, run the tests inside it, then destroy it. No need to install Go on the VM.
+
+---
+
+### What is the `:` in `export PATH=\$PATH:${GO_BIN}`?
+
+The colon is the **separator** in the Linux PATH variable. PATH is a colon-separated list of
+directories where Linux looks for commands.
+
+```bash
+echo $PATH
+# /usr/bin:/usr/sbin:/usr/local/bin   ← colon separates each directory
+
+# When you type 'go', Linux checks each directory in order:
+#   /usr/bin/go        → not found
+#   /usr/sbin/go       → not found
+#   /usr/local/bin/go  → not found
+#   → "command not found" ❌
+
+export PATH=$PATH:/usr/local/go/bin
+# PATH is now: /usr/bin:/usr/sbin:/usr/local/bin:/usr/local/go/bin
+
+# Type 'go' again → Linux checks /usr/local/go/bin/go → FOUND ✅
+```
+
+The `:` just means "and also look in this directory." Nothing Groovy — pure bash.
+
+---
+
+### What is the `? :` ternary operator?
+
+A one-line if/else. Every language has it (Groovy, Java, JavaScript).
+
+```groovy
+// Normal if/else (long form)
+def lastVersion
+if (fileExists(env.VERSION_FILE)) {
+    lastVersion = readFile(env.VERSION_FILE).trim()
+} else {
+    lastVersion = "v1.0"
+}
+
+// Ternary (short form) — exact same thing
+def lastVersion = fileExists(env.VERSION_FILE)
+    ? readFile(env.VERSION_FILE).trim()   // condition TRUE  → use this
+    : "v1.0"                              // condition FALSE → use this
+```
+
+Pattern: `condition ? value_if_true : value_if_false`
+Read it as: "if fileExists → read the file, else → use v1.0"
+
+---
+
+### What is the `.` in `"v${parts[0]}.${parts[1]}"`?
+
+That dot is just a **literal dot character** — the dot you see between major and minor in version numbers.
+
+```groovy
+parts = ["1", "4"]    // after splitting "1.4" on "."
+
+"v${parts[0]}.${parts[1]}"
+//      ↑        ↑   ↑
+//    major   dot  minor
+// Result: "v1.4"
+
+// The full line in our Jenkinsfile:
+def suggestion = "v${parts[0]}.${(parts[1].toInteger() + 1)}"
+//                          ↑
+//                  literal dot (just the dot in "v1.5")
+// parts[1] = "4" → .toInteger() converts "4" → 4 → +1 → 5
+// Result: "v1.5"
+```
+
+`.toInteger()` is a Groovy method (converts a string to a number).
+The `.` between `parts[0]}` and `${...}` is just the dot in `v1.5` — not a Groovy operator.
+
+---
+
+### Full annotated Jenkinsfile
 
 ```groovy
 pipeline {
-  agent any    // run on any available Jenkins agent
+  // ─────────────────────────────────────────────────────
+  // agent — WHERE the pipeline runs
+  // 'any' = use this Jenkins VM (the only one we have)
+  // ─────────────────────────────────────────────────────
+  agent any
 
+  // ─────────────────────────────────────────────────────
+  // environment — define variables usable in ALL stages
+  // ${WORKSPACE} is a Jenkins built-in = the git checkout folder
+  //   → /var/lib/jenkins/workspace/go-web-app
+  // ─────────────────────────────────────────────────────
   environment {
-    // WORKSPACE = /var/lib/jenkins/workspace/go-web-app  (Jenkins' own git checkout)
-    // Jenkins runs as 'jenkins' OS user — NOT vagrant. WORKSPACE is fully accessible.
-    APP_DIR      = "${WORKSPACE}"                              // Go source at repo root
-    DEVOPS_DIR   = "${WORKSPACE}/devops_implementaion"         // DevOps files subfolder
-    VERSION_FILE = "/var/lib/jenkins/.docker_version"          // OUTSIDE workspace (persists between builds)
+    APP_DIR      = "${WORKSPACE}"
+    DEVOPS_DIR   = "${WORKSPACE}/devops_implementaion"
+    VERSION_FILE = "/var/lib/jenkins/.docker_version"    // OUTSIDE workspace so git checkout doesn't wipe it
     HELM_VALUES  = "${WORKSPACE}/devops_implementaion/helm/go-web-app-chart/values.yaml"
-    CREDS_FILE   = "/var/lib/jenkins/dockerhub_creds.env"     // DockerHub login (never in git)
+    CREDS_FILE   = "/var/lib/jenkins/dockerhub_creds.env"
     GO_BIN       = "/usr/local/go/bin"
   }
 
   stages {
 
-    stage('Checkout') { ... }
-    // Jenkins clones git@github.com:rishu4u/go-web-app.git into WORKSPACE
-    // The synced folder /home/vagrant/devops is COMPLETELY IGNORED by Jenkins
+    // ─────────────────────────────────────────────────────
+    // Stage 1: Checkout
+    // Jenkins automatically clones the repo into WORKSPACE.
+    // This stage just confirms the checkout happened.
+    // ─────────────────────────────────────────────────────
+    stage('Checkout') {
+      steps {
+        sh "echo 'Workspace: ${WORKSPACE}'"  // sh = run this in bash on the Jenkins VM
+        sh "ls ${DEVOPS_DIR} || true"        // || true = don't fail if folder is empty
+      }
+    }
 
+    // ─────────────────────────────────────────────────────
+    // Stage 2: Test
+    // sh runs go test in bash
+    // export PATH adds Go binary location so 'go' command is found
+    // ─────────────────────────────────────────────────────
     stage('Test') {
-      sh "cd ${APP_DIR} && go test ./..."
-      // APP_DIR = WORKSPACE = repo root = has main.go + go.mod ✅
+      steps {
+        sh """
+          export PATH=\$PATH:${GO_BIN}   // \$ = literal dollar (bash variable, not Jenkins)
+          cd ${APP_DIR}                  // ${APP_DIR} = Jenkins variable, expanded before bash runs
+          go test ./...                  // ./... = test all packages recursively
+        """
+      }
     }
 
+    // ─────────────────────────────────────────────────────
+    // Stage 3: Version Tag
+    // script{} block is needed here because we have Groovy logic
+    // (reading files, string manipulation, conditional, input prompt)
+    // ─────────────────────────────────────────────────────
     stage('Version Tag') {
-      // 1. Reads VERSION_FILE → e.g. v1.0 (or defaults to v1.0 if file missing)
-      // 2. Suggests v1.1 (auto-increments minor)
-      // 3. Pipeline PAUSES — shows input dialog in Jenkins UI
-      // 4. User accepts suggested tag or types custom one → clicks Proceed
+      steps {
+        script {
+          // readFile() = Jenkins step to read a file into a string
+          def lastVersion = fileExists(env.VERSION_FILE)
+            ? readFile(env.VERSION_FILE).trim()
+            : "v1.0"
+
+          // String manipulation in Groovy to increment minor version
+          def parts = lastVersion.replaceAll('^v','').tokenize('.')
+          def suggestion = "v${parts[0]}.${(parts[1].toInteger() + 1)}"
+
+          // input() = PAUSES the pipeline and shows a dialog in Jenkins UI
+          // User types a version or accepts the suggestion → clicks Proceed
+          def userInput = input(
+            message: "Last: ${lastVersion}  |  Suggested: ${suggestion}",
+            parameters: [string(name: 'VERSION', defaultValue: suggestion)]
+          )
+
+          // env.X = set a Jenkins env variable for use in later stages
+          env.IMAGE_VERSION = userInput ?: suggestion
+          env.IMAGE_TAG     = "${env.DOCKERHUB_USERNAME}/go-web-app:${env.IMAGE_VERSION}"
+        }
+      }
     }
 
+    // ─────────────────────────────────────────────────────
+    // Stage 4: Docker Build
+    // sh runs docker build in bash
+    // -f = path to Dockerfile (not in repo root, in subfolder)
+    // -t = tag the image as saurabhhub1/go-web-app:v1.1
+    // last argument = build context (folder Docker reads files from)
+    // ─────────────────────────────────────────────────────
     stage('Docker Build') {
-      sh "docker build -f ${DEVOPS_DIR}/Dockerfile -t ${IMAGE_TAG} ${APP_DIR}"
-      // Dockerfile is in devops_implementaion/ subfolder
-      // Build context is repo root (has main.go, go.mod, static/)
+      steps {
+        sh """
+          docker build \
+            -f ${DEVOPS_DIR}/Dockerfile \
+            -t ${env.IMAGE_TAG} \
+            ${APP_DIR}
+        """
+      }
     }
 
+    // ─────────────────────────────────────────────────────
+    // Stage 5: Approval Gate
+    // input() pauses and shows Proceed / Abort buttons in Jenkins UI
+    // If user clicks Abort → pipeline stops, image is NOT pushed
+    // ─────────────────────────────────────────────────────
     stage('Push to DockerHub?') {
-      input(message: "Push saurabhhub1/go-web-app:v1.1 to DockerHub?", ok: "Yes, Push It!")
-      // Pipeline PAUSES — human approval gate
+      steps {
+        script {
+          input(
+            message: "Push ${env.IMAGE_TAG} to DockerHub?",
+            ok: 'Yes, Push It!'
+          )
+        }
+      }
     }
 
+    // ─────────────────────────────────────────────────────
+    // Stage 6: Docker Push
+    // Reads credentials from a file outside git (never committed)
+    // export $(...) = load all KEY=VALUE lines from file as env vars
+    // echo "$TOKEN" | docker login --password-stdin = non-interactive login
+    //   (avoids password appearing in logs)
+    // ─────────────────────────────────────────────────────
     stage('Docker Push') {
-      // Loads DOCKERHUB_USERNAME + DOCKERHUB_TOKEN from /var/lib/jenkins/dockerhub_creds.env
-      // Non-interactive login: echo "$TOKEN" | docker login --password-stdin
-      // Then: docker push saurabhhub1/go-web-app:v1.1
-      // Saves new version to VERSION_FILE after successful push
+      steps {
+        sh """
+          export \$(grep -v '^#' ${CREDS_FILE} | xargs)   // load DOCKERHUB_USERNAME + DOCKERHUB_TOKEN
+          echo "\$DOCKERHUB_TOKEN" | docker login \
+            --username "\$DOCKERHUB_USERNAME" \
+            --password-stdin                               // reads password from stdin, not from CLI arg
+          docker push ${env.IMAGE_TAG}
+        """
+        sh "echo '${env.IMAGE_VERSION}' > ${env.VERSION_FILE}"  // save version for next build
+      }
     }
 
+    // ─────────────────────────────────────────────────────
+    // Stage 7: Update Helm Tag
+    // sed -i = edit file in-place (no temp file)
+    // 's/tag: .*/tag: "v1.1"/' = replace the tag line with new version
+    // Then git add/commit/push so GitHub has the updated values.yaml
+    // [skip ci] in commit message = tells GitHub Actions NOT to trigger a new pipeline run
+    // ─────────────────────────────────────────────────────
     stage('Update Helm Tag') {
-      sh "sed -i 's/tag: .*/tag: \"${IMAGE_VERSION}\"/' ${HELM_VALUES}"
-      // Updates helm/go-web-app-chart/values.yaml with new image tag
-      // This enables GitOps / Argo CD to detect and deploy the new version
+      steps {
+        sh """
+          sed -i 's/tag: .*/tag: \"${env.IMAGE_VERSION}\"/' ${HELM_VALUES}
+          cd ${APP_DIR}
+          git config user.email "jenkins-bot@go-web-app.local"
+          git config user.name  "Jenkins CI"
+          git fetch origin
+          git checkout main
+          git pull --rebase origin main
+          git add ${HELM_VALUES}
+          git diff --cached --quiet || \
+            git commit -m "ci: update Helm image tag to ${env.IMAGE_VERSION} [skip ci]"
+          git push origin main
+        """
+      }
     }
+
+  }  // end stages
+
+  // ─────────────────────────────────────────────────────
+  // post — runs AFTER all stages complete
+  // success / failure / aborted = conditional blocks
+  // ─────────────────────────────────────────────────────
+  post {
+    success  { echo "Pipeline succeeded: ${env.IMAGE_TAG}" }
+    failure  { echo "Pipeline FAILED — check stage logs above" }
+    aborted  { echo "Pipeline aborted — push was declined" }
   }
+
 }
 ```
 
@@ -1450,7 +2093,7 @@ Jenkins Vagrant VM (192.168.56.12)
 # Download and install
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 unzip awscliv2.zip
-sudo ./aws/install
+sudo ./aws/install 
 
 # Verify
 aws --version
@@ -1510,14 +2153,93 @@ aws sts get-caller-identity
 ## 5.6  TERRAFORM COMMANDS — CORE WORKFLOW
 
 ```bash
-terraform init      # download providers (AWS plugin) — run once per new directory
-terraform plan      # preview: what will be CREATED / CHANGED / DESTROYED
-terraform apply     # actually create the infrastructure (prompts "yes" to confirm)
-terraform destroy   # tear down ALL resources created by this config
-terraform output    # show outputs (EC2 IPs, ALB DNS, etc.) after apply
-terraform show      # show current state
-terraform state list  # list all resources in state
+terraform init        # download providers (AWS plugin) — run once per new directory
+terraform plan        # preview: what will be CREATED / CHANGED / DESTROYED (no cost)
+terraform apply       # actually create the infrastructure (prompts "yes" to confirm)
+terraform output      # show output values after apply (EC2 IPs, etc.)
+terraform destroy     # tear down ALL resources Terraform created
+terraform show        # show full current state in human-readable form
+terraform state list  # list all resource names Terraform is tracking
 ```
+
+---
+
+## 5.6b  TERRAFORM STATE FILE — What It Is and Why It Matters
+
+When you run `terraform apply`, Terraform creates a file called `terraform.tfstate`
+in the same directory. This is the **state file** — Terraform's memory.
+
+```
+devops_implementaion/terraform/
+└── terraform.tfstate     ← created after first apply (NOT in git — gitignored)
+```
+
+**What it stores:** The real AWS resource IDs that Terraform created.
+```json
+{
+  "resources": [
+    {
+      "type": "aws_instance",
+      "name": "k8s_master",
+      "instances": [{ "attributes": { "id": "i-0abc123", "public_ip": "3.91.x.x" } }]
+    }
+  ]
+}
+```
+
+**Why it matters:**
+- `terraform plan` compares your `.tf` files against the state file to know what changed
+- `terraform destroy` reads the state file to know WHICH resources to delete
+- If you lose the state file → Terraform doesn't know what it created → can't manage or destroy
+
+**Never:**
+- Commit `terraform.tfstate` to Git (contains real resource IDs and may have secrets)
+- Delete it manually unless you know exactly what you're doing
+
+**Team scenario (not ours yet):** Multiple people sharing Terraform → use S3 remote backend to store the state file centrally instead of locally.
+
+---
+
+## 5.6c  TERRAFORM DESTROY — WHEN AND HOW
+
+`terraform destroy` tears down everything Terraform created — EC2, VPC, SG, key pairs.
+It reads the state file to know exactly what to delete.
+
+```bash
+# Always run output BEFORE destroy — save the IPs you'll need for Phase 3
+terraform output
+
+# Then destroy
+terraform destroy
+# Terraform shows a plan of what will be deleted → type 'yes' to confirm
+```
+
+**When to destroy:**
+
+| Situation | Action |
+|---|---|
+| Done for the day, not continuing Phase 3 yet | ✅ Destroy — avoid AWS charges |
+| About to start Phase 3 right now | ❌ Keep running — you need the IPs |
+| Something went wrong with apply | ✅ Destroy and re-apply cleanly |
+
+**Free tier math — why destroy matters:**
+
+```
+AWS Free Tier: 750 hours/month for t2.micro
+Our setup: 2 x t2.micro running simultaneously = 2 × 24h = 48h/day consumed
+750 ÷ 48 = ~15 days before free tier exhausted → charges start
+```
+
+So leaving 2 instances running idle will exceed free tier in about 2 weeks.
+
+**After destroy — what happens:**
+- EC2 instances terminated ✅
+- VPC, subnets, SGs deleted ✅
+- State file updated (resources removed) ✅
+- `.tf` files untouched — ready to `terraform apply` again anytime
+
+**Re-applying gives NEW IPs.** Save the old IPs from `terraform output` before destroying
+if you need them for reference. Phase 3 will use the new IPs from the next apply.
 
 ---
 
@@ -1525,12 +2247,96 @@ terraform state list  # list all resources in state
 
 ```
 devops_implementaion/terraform/
-├── main.tf              ← AWS provider + EC2 instances
-├── vpc.tf               ← VPC, subnets, internet gateway, route table
-├── security_groups.tf   ← firewall rules (which ports open to whom)
-├── variables.tf         ← input variable declarations
-├── outputs.tf           ← what to print after apply (EC2 IPs, etc.)
-└── terraform.tfvars     ← actual variable values (gitignored! has secrets)
+├── main.tf              ← terraform{} block + provider{} block + EC2 resources
+├── vpc.tf               ← VPC, subnets, internet gateway, route table resources
+├── security_groups.tf   ← firewall rule resources
+├── variables.tf         ← variable{} declarations (names + types, no values)
+├── outputs.tf           ← output{} declarations (what to print after apply)
+└── terraform.tfvars     ← actual variable values (gitignored — has secrets)
+```
+
+> ⭐ Terraform reads ALL .tf files in the directory — filename doesn't matter.
+> Split into multiple files for readability only. One big file works identically.
+> Exception: `terraform.tfvars` is special — auto-loaded for variable values.
+
+---
+
+## 5.7b  TERRAFORM BLOCK TYPES — THE FULL STRUCTURE
+
+Every `.tf` file is made up of these 5 block types. That's it — the whole language.
+
+```hcl
+# ── 1. terraform {} ────────────────────────────────────────────────
+# Settings block. Tells Terraform which plugin to download.
+# Written ONCE per project (top of main.tf).
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"   # download from registry.terraform.io
+      version = "~> 5.0"          # any version >= 5.0 and < 6.0
+    }
+  }
+  required_version = ">= 1.0"    # minimum Terraform version required
+}
+
+# ── 2. provider {} ─────────────────────────────────────────────────
+# Configures the cloud connection: which region, how to authenticate.
+# Written ONCE per provider.
+provider "aws" {
+  region = var.aws_region   # credentials come from ~/.aws/credentials
+}
+
+# ── 3. variable {} ─────────────────────────────────────────────────
+# Declares an input. Like a function parameter.
+# Only the DECLARATION goes here — values come from terraform.tfvars.
+variable "aws_region" {
+  description = "AWS region to deploy into"
+  type        = string
+  default     = "us-east-1"   # used if no value provided in tfvars
+}
+
+# ── 4. resource {} ─────────────────────────────────────────────────
+# Creates infrastructure. One block = one thing on AWS.
+# Syntax: resource "<provider_type>" "<your_local_name>" { }
+resource "aws_instance" "k8s_master" {
+  ami           = var.ami_id         # var.x = read from variables
+  instance_type = var.instance_type
+}
+
+# ── 5. output {} ───────────────────────────────────────────────────
+# Prints a value after terraform apply.
+# Reference resources as: <type>.<local_name>.<attribute>
+output "master_public_ip" {
+  value = aws_instance.k8s_master.public_ip
+}
+```
+
+### How the blocks connect — reading order
+
+```
+terraform.tfvars          variables.tf              main.tf / vpc.tf
+─────────────────         ─────────────────         ─────────────────────────
+aws_region = "us-east-1"  variable "aws_region" {}  provider "aws" {
+instance_type = "t2.micro" variable "instance_type"   region = var.aws_region
+                                                    }
+      ↓ values flow into ↓                          resource "aws_instance" "k8s_master" {
+                                                      instance_type = var.instance_type
+                                                    }
+                                                          ↓ after apply ↓
+                                                    outputs.tf
+                                                    output "master_ip" {
+                                                      value = aws_instance.k8s_master.public_ip
+                                                    }
+```
+
+### Processing order (what Terraform does internally)
+
+```
+1. terraform {}   → download AWS plugin (terraform init)
+2. provider {}    → connect to AWS us-east-1 with ~/.aws/credentials
+3. variable {}    → load values from terraform.tfvars
+4. resource {}    → plan what to create (using var.x)
+5. output {}      → after apply, print these values
 ```
 
 ---
