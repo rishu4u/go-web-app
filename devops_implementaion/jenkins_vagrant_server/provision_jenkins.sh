@@ -2,7 +2,9 @@
 # ============================================================
 # provision_jenkins.sh
 # Provision script for the Jenkins CI/CD Vagrant server.
-# Installs: Java 17, Jenkins LTS, Docker CE, Go 1.22
+# Installs: Java 17, Jenkins LTS, Docker CE, Go 1.22,
+#           AWS CLI, Terraform, Ansible
+# One vagrant up = fully ready machine. No manual installs.
 # ============================================================
 
 set -euo pipefail
@@ -23,6 +25,14 @@ wget -O /etc/apt/keyrings/jenkins-keyring.asc \
 echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] \
   https://pkg.jenkins.io/debian-stable binary/" \
   | tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+# ── HashiCorp repo (Terraform) ───────────────────────────────
+echo "Adding HashiCorp (Terraform) repo..."
+wget -O - https://apt.releases.hashicorp.com/gpg 2>/dev/null \
+  | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+  https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+  | tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
 
 # ── Docker repo ───────────────────────────────────────────────
 if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
@@ -50,9 +60,13 @@ apt-get install -y \
   lsb-release \
   wget \
   git \
+  unzip \
+  python3-pip \
   openjdk-17-jdk \
   jenkins \
-  docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+  docker-ce docker-ce-cli containerd.io docker-buildx-plugin \
+  terraform \
+  ansible
 
 java -version
 echo "Docker version: $(docker --version)"
@@ -92,7 +106,26 @@ export PATH=$PATH:/usr/local/go/bin
 echo "Go version: $(go version)"
 
 echo "================================================================"
-echo " Step 5: Validate DockerHub credentials env vars"
+echo " Step 5: Install AWS CLI v2"
+echo "================================================================"
+if command -v aws &>/dev/null; then
+  echo "AWS CLI already installed — skipping"
+else
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+  rm -rf /tmp/awscliv2.zip /tmp/aws
+fi
+echo "AWS CLI version: $(aws --version)"
+
+echo "================================================================"
+echo " Step 5b: Verify Terraform and Ansible"
+echo "================================================================"
+terraform --version
+ansible --version | head -1
+
+echo "================================================================"
+echo " Step 6: Validate DockerHub credentials env vars"
 echo "================================================================"
 if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
   echo "WARNING: DOCKERHUB_USERNAME or DOCKERHUB_TOKEN is not set."
@@ -127,6 +160,9 @@ echo ""
 echo "================================================================"
 echo " PROVISIONING COMPLETE"
 echo "================================================================"
+echo ""
+echo " Installed: Java 17, Jenkins, Docker CE, Go 1.22"
+echo "            Terraform, AWS CLI, Ansible"
 echo ""
 echo " Jenkins URL : http://192.168.56.12:8080"
 echo "             OR http://localhost:9090  (port-forwarded to host)"

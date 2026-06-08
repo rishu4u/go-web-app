@@ -30,6 +30,7 @@
 | Daily add/commit/push | [1.4](#14--daily-git-workflow) |
 | The 4 git areas (mental model) | [1.4b](#14b--the-4-git-areas) |
 | Reading `git status` output | [1.4c](#14c--reading-git-status-output) |
+| Reading `git log` output (HEAD, origin/main, SHA) | [1.4c2](#14c2--reading-git-log-output--line-by-line) |
 | `git diff` / `git diff --staged` | [1.4d](#14d--seeing-what-changed) |
 | Undo anything (restore, reset, revert) | [1.4e](#14e--undoing-things--every-scenario) |
 | git stash / stash pop | [1.4f](#14f--stash--save-work-temporarily) |
@@ -350,6 +351,58 @@ Untracked files:                                  ← NEW files git has never se
 ```
 
 > ⭐ Only "Changes to be committed" goes into `git commit`. The other two sections are ignored.
+
+---
+
+## 1.4c2  READING `git log` OUTPUT — Line by Line
+
+```bash
+git log --oneline
+```
+
+Example output:
+```
+cc84b6a (HEAD -> main, origin/main, origin/HEAD)  Jenkins concept update
+9644fd8  fix: Stage 7 pull before sed
+86261d0  Updated Material June7
+```
+
+### What each part means
+
+```
+cc84b6a  (HEAD -> main, origin/main, origin/HEAD)  Jenkins concept update
+───────   ──────────────────────────────────────── ──────────────────────
+   │              │                                        │
+Short SHA    Pointer labels                          Commit message
+(7 chars of  (where each branch pointer is)
+ the full
+ commit hash)
+```
+
+### The pointer labels explained
+
+| Label | What it means |
+|---|---|
+| `HEAD -> main` | WHERE YOU ARE right now. HEAD = current position. `-> main` = you're on the main branch |
+| `origin/main` | Where GitHub's `main` branch is (last time you fetched/pulled) |
+| `origin/HEAD` | GitHub's default branch pointer (usually same as `origin/main`) |
+
+### Reading the sync state from git log
+
+```
+cc84b6a (HEAD -> main, origin/main, origin/HEAD)  ← All 3 on same commit
+                                                     = LOCAL and GITHUB are in sync ✅
+
+cc84b6a (HEAD -> main)                             ← Only local here
+9644fd8 (origin/main, origin/HEAD)                 = You have 1 unpushed commit
+                                                     needs: git push
+
+cc84b6a (origin/main, origin/HEAD)                 ← Only GitHub here
+9644fd8 (HEAD -> main)                             = GitHub has 1 commit you don't
+                                                     needs: git pull
+```
+
+> ⭐ Rule: When `HEAD -> main` and `origin/main` are on the SAME commit line → you're fully in sync with GitHub. When they're on different lines → one side has commits the other doesn't.
 
 ---
 
@@ -2513,6 +2566,38 @@ Then Jenkins job was updated: Branch `*/main`, Script Path `devops_implementaion
 
 ## 3.11  JENKINS GOTCHAS WE HIT
 
+### ℹ️ Jenkins workspace starts in detached HEAD — normal behaviour
+
+In Stage 7 output you'll see:
+```
+Previous HEAD position was cc84b6a Jenkins concept update
+Switched to branch 'main'
+Your branch is behind 'origin/main' by 2 commits, and can be fast-forwarded.
+```
+
+**Why:** When Jenkins checks out a repo, it checks out a specific **commit SHA** (detached HEAD) rather than a branch. This is intentional — Jenkins pins to an exact commit for build reproducibility.
+
+```
+Detached HEAD = you're at a specific commit, not on any branch
+              = git doesn't know which branch to push to
+              = Stage 7's "git push origin main" would fail
+```
+
+**Why Stage 7 runs `git checkout main`:**
+To switch FROM the detached commit ONTO the `main` branch before committing and pushing.
+Without this, `git push` would fail with "not on any branch."
+
+```groovy
+git checkout main        // attach to branch (exit detached HEAD)
+git pull --rebase origin main   // sync with GitHub
+sed -i ...               // modify values.yaml
+git add + commit + push  // now push works ✅
+```
+
+This is expected behaviour — not an error.
+
+---
+
 ### ❌ Stage 7 fails — "cannot pull with rebase: You have unstaged changes"
 
 ```
@@ -2616,6 +2701,61 @@ sudo journalctl -u jenkins -f
 # Jenkins version
 jenkins --version
 ```
+
+---
+
+## 3.8b  JENKINS TIMEZONE — How to Change
+
+Jenkins UI shows UTC by default. The timezone is controlled by the JVM, not the OS.
+
+### Step 1 — Edit Jenkins defaults file
+
+```bash
+sudo nano /etc/default/jenkins
+```
+
+Change or add the `JAVA_ARGS` line:
+```
+JAVA_ARGS="-Djava.awt.headless=true -Duser.timezone=Asia/Kolkata"
+```
+
+Save and restart:
+```bash
+sudo systemctl restart jenkins
+```
+
+### If it still shows UTC after restart — use systemd override instead
+
+On **Ubuntu 22.04 with systemd**, Jenkins may not read `/etc/default/jenkins`.
+Use a systemd drop-in override:
+
+```bash
+sudo systemctl edit jenkins
+```
+
+Add these lines in the editor that opens:
+```ini
+[Service]
+Environment="JAVA_OPTS=-Djava.awt.headless=true -Duser.timezone=Asia/Kolkata"
+```
+
+Save (`Ctrl+O` → Enter → `Ctrl+X`), then:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart jenkins
+```
+
+### Verify in Jenkins Script Console
+
+```
+Manage Jenkins → Script Console → run:
+println TimeZone.getDefault()
+```
+
+Expected: `sun.util.calendar.ZoneInfo[id="Asia/Kolkata"...]`
+
+> ⚠️ Gotcha: `/etc/default/jenkins` is only read at Jenkins startup. Editing the file
+> has no effect until you restart Jenkins.
 
 ---
 
