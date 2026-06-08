@@ -26,7 +26,7 @@ Developer pushes code
         │  values.yaml updated in GitHub
         ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  PHASE 2 — INFRASTRUCTURE (AWS)                       🔲 NEXT   │
+│  PHASE 2 — INFRASTRUCTURE (AWS)                       ✅ DONE    │
 │                                                                  │
 │  Terraform provisions (FREE TIER — t2.micro + gp2):             │
 │    2x EC2 t2.micro (master + worker) — free tier eligible        │
@@ -138,7 +138,7 @@ devops_implementaion/
 
 ---
 
-## PHASE 2 — Infrastructure as Code (Terraform + AWS) 🔲
+## PHASE 2 — Infrastructure as Code (Terraform + AWS) ✅ COMPLETED
 
 ### What is Terraform?
 Terraform is an IaC tool. Instead of clicking in the AWS console to create EC2 instances,
@@ -372,10 +372,10 @@ requests.post("http://192.168.56.12:8080/job/go-web-app/build",
 | 1 | DockerHub | Image Registry | ✅ Done |
 | 1 | Vagrant | Local VM Provisioning | ✅ Done |
 | 1 | Bash | Scripting (provisioning) | ✅ Done |
-| 2 | Terraform | IaC — AWS Infrastructure | 🔲 Phase 2 |
-| 2 | AWS EC2 | Compute | 🔲 Phase 2 |
-| 2 | AWS ALB | Load Balancing | 🔲 Phase 2 |
-| 2 | AWS Route 53 | DNS | 🔲 Phase 2 |
+| 2 | Terraform | IaC — AWS Infrastructure | ✅ Done |
+| 2 | AWS EC2 | Compute | ✅ Done |
+| 2 | AWS ALB | Load Balancing | 🔲 Phase 4 |
+| 2 | AWS Route 53 | DNS | 🔲 Phase 4 |
 | 3 | Ansible | Configuration Management | 🔲 Phase 3 |
 | 4 | Kubernetes | Container Orchestration | 🔲 Phase 4 |
 | 4 | Helm | K8s Package Manager | 🔲 Phase 4 |
@@ -415,7 +415,7 @@ A Senior DevOps Engineer is expected to know and have worked with:
 
 ```
 Phase 1  ✅  CI/CD          (Done — Jenkins + Docker)
-Phase 2  🔲  Terraform      (Start here — set up AWS infra)
+Phase 2  ✅  Terraform      (Done — EC2 created, destroyed after testing)
 Phase 3  🔲  Ansible        (Configure EC2 from Terraform output)
 Phase 4  🔲  K8s + Helm     (Deploy app to cluster)
 Phase 5  🔲  Argo CD        (Connect Jenkins → GitHub → K8s auto-deploy)

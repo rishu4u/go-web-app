@@ -177,35 +177,28 @@ pipeline {
       steps {
         echo "=== Bumping image tag in Helm values.yaml ==="
         sh """
-          sed -i 's/tag: .*/tag: \"${env.IMAGE_VERSION}\"/' ${HELM_VALUES}
-          grep 'tag:' ${HELM_VALUES}
-        """
-        echo "Helm values.yaml updated to tag: ${env.IMAGE_VERSION}"
-
-        // Push the Helm tag update from the Jenkins VM itself
-        // Prerequisites:
-        //   1. jenkins user SSH key added to GitHub  (done in Section 3.2 of flow_and_commands.md)
-        //   2. git config user.name/email set for jenkins user (done below)
-        sh """
           cd ${APP_DIR}
 
-          # Configure git identity for jenkins user (one-time-ish, safe to re-run)
+          # Configure git identity for jenkins user
           git config user.email "jenkins-bot@go-web-app.local"
           git config user.name  "Jenkins CI"
 
-          # Make sure we are on main and up-to-date before committing
+          # Step 1 — Sync with remote FIRST (before modifying any files)
+          # git pull --rebase requires a clean working tree
           git fetch origin
           git checkout main
           git pull --rebase origin main
 
-          # Stage only the values.yaml that was updated
+          # Step 2 — Now modify values.yaml (working tree is clean, no rebase conflict)
+          sed -i 's/tag: .*/tag: "${env.IMAGE_VERSION}"/' ${HELM_VALUES}
+          grep 'tag:' ${HELM_VALUES}
+
+          # Step 3 — Stage, commit, push
           git add ${HELM_VALUES}
 
-          # Commit (if nothing changed this is a no-op, --allow-empty prevents failure)
           git diff --cached --quiet || \
             git commit -m "ci: update Helm image tag to ${env.IMAGE_VERSION} [skip ci]"
 
-          # Push back to GitHub using the jenkins SSH key
           git push origin main
         """
 

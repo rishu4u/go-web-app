@@ -8,14 +8,19 @@
 
 ## TABLE OF CONTENTS
 
-| Section | Tool | What's in it |
-|---|---|---|
-| [Section 0](#section-0--jenkins-server-setup-vagrant) | Vagrant / Jenkins VM | `vagrant up`, provision, key paths, daily VM commands |
-| [Section 1](#section-1--git) | Git | SSH setup, daily workflow, undo everything, stash, fetch vs pull, gotchas |
-| [Section 2](#section-2--docker) | Docker | Build, run, push, DockerHub login, version tracking |
-| [Section 3](#section-3--jenkins) | Jenkins | Pipeline stages, SSH keys, credentials, Jenkinsfile explained, gotchas |
-| [Section 4](#section-4--vagrant-quick-ref) | Vagrant | Quick command reference |
-| [Section 5](#section-5--phase-2-terraform--aws) | Terraform + AWS | Install, AWS CLI setup, `terraform apply` workflow |
+| Section | Tool | Phase | What's in it |
+|---|---|---|---|
+| [Section 0](#section-0--jenkins-server-setup-vagrant) | Vagrant / Jenkins VM | Phase 1 | `vagrant up`, provision, key paths, daily VM commands |
+| [Section 1](#section-1--git) | Git | All phases | SSH setup, daily workflow, undo everything, stash, fetch vs pull, conflicts, gotchas |
+| [Section 2](#section-2--docker) | Docker | Phase 1 | Build, run, push, DockerHub login, version tracking |
+| [Section 3](#section-3--jenkins) | Jenkins | Phase 1 | Pipeline stages, SSH keys, credentials, Jenkinsfile explained, build triggers |
+| [Section 4](#section-4--vagrant-quick-ref) | Vagrant | Phase 1 | Quick command reference |
+| [Section 5](#section-5--phase-2-terraform--aws) | Terraform + AWS | Phase 2 | Install, AWS CLI setup, block types, `terraform apply` workflow |
+| Section 6 *(coming)* | Ansible | Phase 3 | EC2 config, k3s install playbooks |
+| Section 7 *(coming)* | Kubernetes + Helm | Phase 4 | kubectl, helm install/upgrade/rollback |
+| Section 8 *(coming)* | ArgoCD | Phase 5 | GitOps sync, app setup |
+| Section 9 *(coming)* | Prometheus + Grafana | Phase 6 | Monitoring stack, dashboards, alerts |
+| Section 10 *(coming)* | Python Automation | Phase 7 | Pipeline scripts, health checks |
 
 ### Git quick-jump
 
@@ -29,14 +34,16 @@
 | Undo anything (restore, reset, revert) | [1.4e](#14e--undoing-things--every-scenario) |
 | git stash / stash pop | [1.4f](#14f--stash--save-work-temporarily) |
 | git fetch vs git pull | [1.4g](#14g--syncing-with-remote--pull-vs-fetch) |
+| Merge conflicts — read markers, resolve, rebase --continue | [1.4h](#14h--merge-conflicts--how-to-read-and-resolve-them) |
 | Scenario flows (clone, new repo, daily push) | [1.5](#15--scenario-flows) |
-| Rollback visual summary | [1.7](#17--rollback-commands) |
-| All git gotchas | [1.9](#19--git-gotchas-we-hit) |
+| Rollback visual + decision table | [1.4e](#14e--undoing-things--every-scenario) |
+| Multiple git identities (personal + work) | [1.10](#110--managing-multiple-git-identities-personal--work-on-same-machine) |
+| All git gotchas | [1.8](#18--git-gotchas-we-hit) |
 
 ---
 
 # ═══════════════════════════════════════════
-#  SECTION 0 — JENKINS SERVER SETUP (Vagrant)
+#  SECTION 0 — JENKINS SERVER SETUP (Vagrant)          [Phase 1 — CI/CD]
 # ═══════════════════════════════════════════
 
 ## 0.1  WHAT GETS CREATED
@@ -215,7 +222,7 @@ sudo -u jenkins ssh -T git@github.com
 ---
 
 # ═══════════════════════════════════════════
-#  SECTION 1 — GIT
+#  SECTION 1 — GIT                                      [All Phases]
 # ═══════════════════════════════════════════
 
 ## 1.1  CORE MENTAL MODEL — 3 Things You Need to Push
@@ -434,6 +441,17 @@ git clean -f        # actually deletes untracked files (⚠️ no undo)
 git clean -fd       # also deletes untracked directories
 ```
 
+### Visual — what each reset/revert does to history
+
+```
+BEFORE:   A → B → C      (C is latest commit)
+
+--soft    A → B           (C removed, files still staged ✅)
+--mixed   A → B           (C removed, files unstaged)
+--hard    A → B           (C removed, disk changes deleted ⚠️)
+revert    A → B → C → D  (D undoes C, full history preserved ✅)
+```
+
 ### Quick decision table
 
 | Situation | Command |
@@ -543,6 +561,100 @@ git stash pop                         # restore your local edits on top
 
 ---
 
+## 1.4h  MERGE CONFLICTS — How to Read and Resolve Them
+
+A merge conflict happens when two commits change the **same lines** of the same file
+and git can't automatically decide which version to keep.
+
+### What a conflict looks like in the file
+
+```
+<<<<<<< HEAD
+export DOCKERHUB_TOKEN=<docker_token>
+=======
+export DOCKERHUB_TOKEN=<your-dockerhub-pat-token-here>
+
+export AWS_ACCESS_KEY_ID=<your-aws-access-key-id>
+>>>>>>> 02c3cca (Updated Material June7)
+```
+
+| Marker | Meaning |
+|---|---|
+| `<<<<<<< HEAD` | Start of conflict — what the REMOTE (or current branch) has |
+| `=======` | Divider between the two versions |
+| `>>>>>>> commit-sha` | End of conflict — what YOUR commit has |
+
+### How to resolve
+
+Open the file, delete the markers and keep what you want:
+
+```bash
+# Option A — keep remote version only
+export DOCKERHUB_TOKEN=<docker_token>
+
+# Option B — keep your version only
+export DOCKERHUB_TOKEN=<your-dockerhub-pat-token-here>
+export AWS_ACCESS_KEY_ID=<your-aws-access-key-id>
+
+# Option C — combine both (what we did for login.txt)
+export DOCKERHUB_TOKEN=<your-dockerhub-pat-token-here>
+export AWS_ACCESS_KEY_ID=<your-aws-access-key-id>
+```
+
+The file must have NO `<<<<<<<`, `=======`, or `>>>>>>>` lines left when you're done.
+
+### Full conflict resolution flow (during rebase)
+
+```bash
+# Situation: git pull --rebase hits a conflict
+# Terminal shows:
+#   CONFLICT (content): Merge conflict in login.txt
+#   error: could not apply abc1234... Your commit message
+
+# Step 1 — find all conflicted files
+git status
+# Shows: "both modified: login.txt"
+
+# Step 2 — open each conflicted file, edit out the markers, keep correct content
+nano devops_implementaion/jenkins_vagrant_server/login.txt
+
+# Step 3 — stage the resolved file
+git add devops_implementaion/jenkins_vagrant_server/login.txt
+
+# Step 4 — continue the rebase (applies your remaining commits)
+git rebase --continue
+# May open editor for commit message — just save and close
+
+# Step 5 — push
+git push
+```
+
+### Escape hatches — if you want to cancel
+
+```bash
+git rebase --abort      # cancel rebase entirely — goes back to state before you ran git pull --rebase
+git merge --abort       # cancel a merge (if using git pull without --rebase)
+```
+
+### The "unstaged changes block rebase" error
+
+```
+error: cannot pull with rebase: You have unstaged changes.
+error: Please commit or stash them.
+```
+
+**Cause:** You have modified files not yet committed. Rebase won't run on a dirty working tree.
+**Fix:** Stash first, then rebase, then pop:
+
+```bash
+git stash                        # shelf unstaged changes
+git pull --rebase origin main    # rebase cleanly
+git stash pop                    # restore your changes on top
+# resolve any conflicts from stash pop if they appear
+```
+
+---
+
 ## 1.5  SCENARIO FLOWS
 
 ### SCENARIO A — Take someone else's repo and make it yours
@@ -639,52 +751,7 @@ Under the hood:
 
 ---
 
-## 1.7  ROLLBACK COMMANDS
-
-### Not pushed yet — 3 options
-
-```bash
-# SOFT — undo commit, keep files staged (safest)
-git reset --soft HEAD~1
-# Use when: wrong commit message, not ready
-
-# MIXED (default) — undo commit, unstage files, keep disk changes
-git reset --mixed HEAD~1    # same as: git reset HEAD~1
-# Use when: want to re-select what to stage
-
-# HARD — undo commit AND delete file changes (⚠️ destructive)
-git reset --hard HEAD~1
-# Use when: want to completely go back in time
-```
-
-### Already pushed to GitHub — use revert (safe)
-
-```bash
-git revert HEAD    # creates a NEW "undo" commit
-git push           # push the revert commit
-# Does NOT rewrite history — GitHub won't complain
-```
-
-### Visual Rollback Summary
-
-```
-BEFORE:   A → B → C      (C is latest)
-
---soft    A → B           (C removed, files still staged)
---mixed   A → B           (C removed, files unstaged)
---hard    A → B           (C removed, disk changes deleted)
-revert    A → B → C → D  (D undoes C, history preserved)
-```
-
-| Situation | Command |
-|---|---|
-| Not pushed, fix commit message | `git reset --soft HEAD~1` |
-| Not pushed, discard completely | `git reset --hard HEAD~1` |
-| Already pushed to GitHub | `git revert HEAD` then `git push` |
-
----
-
-## 1.8  DIAGNOSTIC COMMANDS — Run These When Stuck
+## 1.7  DIAGNOSTIC COMMANDS — Run These When Stuck
 
 ```bash
 # Am I authenticated with GitHub?
@@ -715,7 +782,7 @@ git show HEAD
 
 ---
 
-## 1.9  GIT GOTCHAS WE HIT
+## 1.8  GIT GOTCHAS WE HIT
 
 ### ❌ "does not appear to be a git repository"
 ```
@@ -886,13 +953,102 @@ git config --global pull.rebase true
 
 ---
 
-## 1.10  IDENTITY vs REMOTE vs SSH SUMMARY TABLE
+## 1.9  IDENTITY vs REMOTE vs SSH SUMMARY TABLE
 
 | | Command | What it controls | Affects push access? |
 |---|---|---|---|
 | Identity | `git config user.email` | Label shown on commit | ❌ No |
 | Remote | `git remote -v` | Where to push (URL) | ❌ No |
 | Access | `ssh -T git@github.com` | Permission to push | ✅ Yes |
+
+---
+
+## 1.10  MANAGING MULTIPLE GIT IDENTITIES (Personal + Work on same machine)
+
+### The 3 config levels — lower always wins
+
+```
+System   /etc/gitconfig          ← lowest priority (rarely touched)
+Global   ~/.gitconfig            ← your default for ALL repos
+Local    repo/.git/config        ← per-repo override — ALWAYS wins
+```
+
+**Quick check — which email will this commit use?**
+```bash
+git config user.email
+# Shows the effective email for the current repo (local if set, global otherwise)
+```
+
+---
+
+### Setup: Global = Work, personal repos auto-switch
+
+**This machine setup (office machine):**
+- Global = `stiwary@sparkcognition.com` → all new repos default to work identity
+- Personal repos in `/home/srv/project_srv/` → auto-switch via `includeIf`
+
+**One-time setup (run once):**
+```bash
+# Step 1 — Add directory rule to global config
+cat >> ~/.gitconfig << 'EOF'
+
+[includeIf "gitdir:/home/srv/project_srv/"]
+    path = ~/.gitconfig-personal
+EOF
+
+# Step 2 — Create the personal identity file
+cat > ~/.gitconfig-personal << 'EOF'
+[user]
+    name = rishu4u
+    email = rishusaurabh4u@gmail.com
+EOF
+```
+
+After this — any repo inside `/home/srv/project_srv/` automatically uses personal identity. No manual steps ever again.
+
+---
+
+### Cloning a new personal repo — what to do
+
+**Option A — Clone into project_srv/ (auto-switches via includeIf)**
+```bash
+cd /home/srv/project_srv/
+git clone git@github.com:rishu4u/new-personal-repo.git
+cd new-personal-repo
+git config user.email     # confirms: rishusaurabh4u@gmail.com ✅
+```
+
+**Option B — Clone anywhere, set identity manually**
+```bash
+git clone git@github.com:rishu4u/new-personal-repo.git
+cd new-personal-repo
+git config user.name "rishu4u"
+git config user.email "rishusaurabh4u@gmail.com"
+```
+
+---
+
+### This machine's identity map
+
+| Location | Identity used | How |
+|---|---|---|
+| `/home/srv/repo/iris2/` | `stiwary@sparkcognition.com` | global (no local override) |
+| `/home/srv/repo/VAIA_3/` | `stiwary@sparkcognition.com` | global |
+| `/home/srv/project_srv/go-web-app/` | `rishusaurabh4u@gmail.com` | includeIf |
+| `/home/srv/project_srv/<any new repo>/` | `rishusaurabh4u@gmail.com` | includeIf |
+
+### SSH key routing (~/.ssh/config)
+
+```
+github.com    → ~/.ssh/id_ed25519_personal   (personal key)
+bitbucket.org → ~/.ssh/id_rsa               (work key)
+```
+
+Test anytime:
+```bash
+ssh -T git@github.com       # Hi rishu4u!
+ssh -T git@bitbucket.org    # authenticated via ssh key
+```
 
 ---
 
@@ -989,7 +1145,7 @@ vagrant up / halt / ssh / destroy
 ---
 
 # ═══════════════════════════════════════════
-#  SECTION 2 — DOCKER
+#  SECTION 2 — DOCKER                                   [Phase 1 — CI/CD]
 # ═══════════════════════════════════════════
 
 ## 2.1  CORE MENTAL MODEL
@@ -1029,9 +1185,97 @@ EXPOSE 8080
 CMD ["./main"]
 ```
 
-**Key pattern:** Multi-stage build
-- Stage 1 (`builder`) compiles the code → has all Go tooling (~800MB)
-- Stage 2 copies only the final binary → final image is ~20MB
+---
+
+## 2.2b  DOCKERFILE KEYWORDS EXPLAINED
+
+### `CGO_ENABLED=0` — what and why
+
+CGO = C bindings in Go. By default Go can call C libraries. `CGO_ENABLED=0` disables this.
+
+```
+CGO_ENABLED=0  →  pure Go binary (no C library dependency)
+CGO_ENABLED=1  →  binary links against libc on the host machine
+```
+
+**What happens if NOT set to 0:**
+The binary expects `libc.so` to exist at runtime. The `distroless` image has NO libc → container crashes immediately on start.
+
+---
+
+### `GOOS=linux` — what and why
+
+GOOS = Go Operating System target. Tells the Go compiler which OS to build for.
+
+```
+GOOS=linux    →  builds a Linux ELF binary (runs in containers)
+GOOS=darwin   →  macOS binary
+GOOS=windows  →  Windows .exe
+```
+
+**What happens if NOT set:**
+If you build on macOS without `GOOS=linux`, you get a macOS binary. It will NOT run inside a Linux Docker container. Build fails silently — container exits immediately.
+
+---
+
+### `distroless` base image — what and why
+
+`gcr.io/distroless/base` is a minimal Docker image with:
+- The Linux kernel interface (syscalls)
+- Basic C runtime
+- **NO shell** (`/bin/sh` doesn't exist)
+- **NO package manager** (no apt, yum)
+- **NO extra tools** (no curl, ls, cat)
+
+| | Standard (ubuntu:22.04) | Distroless |
+|---|---|---|
+| Image size | ~80MB | ~20MB |
+| Has shell | ✅ (`/bin/bash`) | ❌ |
+| Attack surface | High | Minimal |
+| If compromised | Attacker has shell access | Nothing to run |
+
+**What happens if NOT used:**
+Using `ubuntu:22.04` or `golang:1.22` as the final stage adds 100-800MB and includes hundreds of exploitable tools.
+
+**Debugging tradeoff:**
+You CANNOT `docker exec -it <container> /bin/sh` into a distroless container — no shell exists.
+To debug: use a debug-variant image: `gcr.io/distroless/base:debug` (adds a shell for dev use only).
+
+---
+
+### Multi-stage build — why it matters
+
+```dockerfile
+# Stage 1: builder (has full Go toolchain ~800MB)
+FROM golang:1.22 AS builder
+RUN go mod download   ← separate layer (cached — only re-runs if go.mod changes)
+COPY . .              ← invalidates cache when source changes
+RUN CGO_ENABLED=0 GOOS=linux go build -o main .
+
+# Stage 2: final image (only gets what you COPY from builder)
+FROM gcr.io/distroless/base
+COPY --from=builder /app/main .     ← --from=builder means: copy FROM stage 1
+COPY --from=builder /app/static ./static
+# All 800MB of Go tooling is DISCARDED — never goes into final image
+```
+
+**`COPY --from=builder`** — `--from=builder` means "copy from the stage named `builder`", not from your local disk.
+
+**Why `go mod download` is a separate RUN (Docker layer caching):**
+```
+go.mod rarely changes → docker caches that layer
+source code changes every build → cache busted from COPY . . onward
+Without the split: every build re-downloads all dependencies (slow)
+With the split: only re-downloads if go.mod actually changed (fast)
+```
+
+**If single-stage (no multi-stage):**
+```
+Final image = golang:1.22 base + your code = ~850MB
+vs
+Final image = distroless + binary = ~20MB
+```
+40x size difference. Larger = slower to pull, more CVEs, bigger attack surface.
 
 ---
 
@@ -1171,10 +1415,78 @@ docker inspect rishu4u/go-web-app:v1.0
 
 ---
 
+## 2.9  RUNNING THE GO APP MANUALLY
+
+### On your HOST laptop (simplest)
+
+Go is NOT installed on the host — but Docker is (v29.5.2).
+Run the built image directly:
+
+```bash
+docker run --rm -p 8080:8080 saurabhhub1/go-web-app:v1.1
+
+# Access at:
+curl http://localhost:8080/home
+# or open browser: http://localhost:8080/home
+```
+
+No port conflict — Jenkins runs inside the Vagrant VM, not on the host. Port 8080 on your laptop is free.
+
+---
+
+### On the Jenkins VM
+
+The app listens on **port 8080** — same port Jenkins uses. Two options:
+
+### Option A — Docker (recommended, no Jenkins conflict)
+
+```bash
+# On Jenkins VM
+# Map container port 8080 → host port 9091 (avoids clashing with Jenkins on 8080)
+docker run --rm -p 9091:8080 saurabhhub1/go-web-app:v1.1
+
+# Access from your laptop:
+curl http://192.168.56.12:9091/home
+# or open in browser: http://192.168.56.12:9091/home
+```
+
+> ⭐ This is the best way — Jenkins keeps running, no interference.
+
+### Option B — `go run` directly (stop Jenkins first)
+
+```bash
+# On Jenkins VM — free up port 8080 by stopping Jenkins
+sudo systemctl stop jenkins
+
+# Run from synced folder (Go source is here)
+cd /home/vagrant/go-web-app
+export PATH=$PATH:/usr/local/go/bin
+go run main.go
+# Output: server started on :8080
+
+# Access from laptop (port 8080 on VM = port 9090 on host via Vagrantfile forward):
+curl http://localhost:9090/home
+# or: curl http://192.168.56.12:8080/home
+
+# When done — restart Jenkins
+sudo systemctl start jenkins
+```
+
+### App endpoints
+
+| Endpoint | What it returns |
+|---|---|
+| `/home` | Home page |
+| `/courses` | Courses listing |
+| `/about` | About page |
+| `/contact` | Contact page |
+
+---
+
 ---
 
 # ═══════════════════════════════════════════
-#  SECTION 3 — JENKINS
+#  SECTION 3 — JENKINS                                  [Phase 1 — CI/CD]
 # ═══════════════════════════════════════════
 
 ## 3.1  CORE MENTAL MODEL
@@ -1256,6 +1568,81 @@ sudo cat /var/lib/jenkins/.ssh/id_ed25519
 > ⭐ **Rule of thumb:**
 > - **Public key** (`.pub`) → goes to **GitHub** (Settings → SSH Keys)
 > - **Private key** (no `.pub`) → goes to **Jenkins GUI** (Credentials)
+
+---
+
+## 3.2b  IDENTITY vs AUTHENTICATION — Two Separate Concepts
+
+### git identity ≠ push permission
+
+```
+git config user.email  →  LABEL on the commit (author metadata only)
+SSH key                →  CONTROLS whether git push is allowed
+```
+
+These are completely independent. You could set:
+```bash
+git config user.email "president@whitehouse.gov"
+```
+But if your SSH key is not registered on GitHub → push is still rejected.
+The identity label has zero effect on access.
+
+---
+
+### Why Stage 7 sets `jenkins-bot@go-web-app.local`
+
+Pure labeling convention. In `git log`, this makes automated commits clearly
+distinguishable from human commits:
+
+```
+e482c75 Jenkins CI  ci: update Helm image tag to v1.2 [skip ci]  ← automated
+49a5ecf rishu4u     docs: update flow_and_commands                ← human
+```
+
+It does NOT affect whether the push succeeds — the SSH key does that.
+
+---
+
+### Why the workspace shows `rishu4u` before Stage 7 runs
+
+The workspace `.git/config` (local git config) has no user identity until
+Stage 7 explicitly sets it. Before that, git falls back up the config hierarchy:
+
+```
+Local  (workspace/.git/config)   → not set yet
+Global (~/.gitconfig on VM)      → jenkins user's global = rishu4u ← shows this
+System (/etc/gitconfig)          → fallback
+```
+
+Stage 7 sets the LOCAL config (`git config user.email` without `--global`)
+which overrides the global — but only for this workspace, and only after Stage 7 runs.
+
+---
+
+### Why the private key is in TWO places
+
+Both use the **same** private key file — but two different consumers need it:
+
+| Consumer | Where they get the key | Used when |
+|---|---|---|
+| `jenkins` OS user | `/var/lib/jenkins/.ssh/id_ed25519` (file on disk) | Manual: `sudo -u jenkins ssh -T git@github.com` |
+| Jenkins application (pipeline jobs) | Jenkins GUI → Credentials → `github-ssh` | Pipeline: `git clone` (Checkout) + `git push` (Stage 7) |
+
+Jenkins the **application** cannot read arbitrary files from disk for security reasons.
+It reads credentials only from its own Credentials store.
+So the private key is pasted into the GUI even though the same file already exists on disk.
+
+The public key goes to GitHub **once** — GitHub verifies the private key matches
+regardless of which of the two above is making the connection.
+
+```
+Flow when pipeline runs git push:
+  Stage 7 → Jenkins reads private key from GUI Credentials (github-ssh)
+          → Opens SSH connection to github.com
+          → GitHub verifies: does this key match any registered public key?
+          → Yes (we added it in KEY 1) → push allowed ✅
+          → Commit is labeled "Jenkins CI <jenkins-bot@go-web-app.local>"
+```
 
 ---
 
@@ -1372,6 +1759,64 @@ Poll SCM every 5 min is what actually triggers builds.
 | Manual (Build Now) | ✅ | ✅ |
 | Poll SCM | ✅ (checks every 5 min) | ✅ (but wasteful) |
 | GitHub Webhook | ❌ (private IP) | ✅ (public IP) |
+
+---
+
+## 3.5c  JENKINSFILE BUILT-IN STEPS — `fileExists()`, `readFile()`, `writeFile()`
+
+These are Jenkins pipeline steps (NOT bash commands). They run in Groovy inside `script{}` blocks.
+
+```groovy
+// fileExists() — returns true/false, never throws
+if (fileExists("/var/lib/jenkins/.docker_version")) {
+    // file exists — safe to read
+}
+
+// readFile() — returns file contents as a String
+// ⚠️ ALWAYS call .trim() — readFile adds a trailing newline
+def version = readFile("/var/lib/jenkins/.docker_version").trim()
+
+// Why check fileExists first:
+// readFile() THROWS an exception if the file doesn't exist — pipeline fails
+// Pattern: always guard readFile() with fileExists()
+def version = fileExists(env.VERSION_FILE)
+    ? readFile(env.VERSION_FILE).trim()
+    : "v1.0"   // default if file missing
+
+// writeFile() — write a string to a file
+writeFile(file: "/var/lib/jenkins/.docker_version", text: "v1.5")
+```
+
+---
+
+## 3.5d  JENKINSFILE `when{}` — CONDITIONAL STAGE EXECUTION
+
+`when{}` lets a stage run only under certain conditions. Common patterns:
+
+```groovy
+stage('Deploy to Production') {
+    when {
+        branch 'main'          // only run on main branch
+    }
+    steps { ... }
+}
+
+stage('Integration Test') {
+    when {
+        not { branch 'main' }  // run on all branches EXCEPT main
+    }
+    steps { ... }
+}
+
+stage('Notify') {
+    when {
+        expression { env.IMAGE_VERSION == "v2.0" }   // custom condition
+    }
+    steps { ... }
+}
+```
+
+**What happens if not used:** Stage always runs regardless of branch or condition. In our pipeline we don't use `when{}` yet — every stage always runs. Phase 5 (multi-environment deploys) is where `when{}` becomes important.
 
 ---
 
@@ -1698,7 +2143,176 @@ pipeline {
 
 ---
 
-## 3.7  KEY CONCEPT — Jenkins WORKSPACE vs Synced Folder
+## 3.6b  `post{}` BLOCK — RUNS AFTER ALL STAGES
+
+`post{}` runs AFTER all stages finish, regardless of outcome. It's how you send notifications, clean up, or report status.
+
+```groovy
+post {
+    success  { echo "Pipeline passed" }     // all stages passed
+    failure  { echo "Pipeline failed" }     // any stage failed
+    aborted  { echo "User cancelled" }      // user clicked Abort
+    always   { echo "Always runs" }         // runs no matter what
+    unstable { echo "Tests had warnings" }  // tests ran but had failures
+    changed  { echo "Status changed" }      // different result from last build
+}
+```
+
+**What happens if NOT used:** Pipeline finishes silently — no final status report, no Slack alert, no cleanup. In production, `post { failure { slackSend(...) } }` is how on-call gets paged.
+
+**Our pipeline's post block:**
+```groovy
+post {
+    success { echo "Pushed: ${env.IMAGE_TAG}" }  // confirm which image was pushed
+    failure { echo "FAILED — check stage logs" }
+    aborted { echo "Push declined or build cancelled" }
+}
+```
+
+---
+
+## 3.6c  `environment{}` BLOCK — PIPELINE VARIABLES
+
+The `environment{}` block defines variables available to ALL stages. Set once, use everywhere.
+
+```groovy
+pipeline {
+    environment {
+        APP_DIR    = "${WORKSPACE}"               // Jenkins built-in — git checkout path
+        CREDS_FILE = "/var/lib/jenkins/creds.env" // outside WORKSPACE — persists across builds
+    }
+    stages {
+        stage('Test') {
+            steps {
+                sh "cd ${APP_DIR} && go test ./..."   // uses environment variable
+            }
+        }
+    }
+}
+```
+
+**`${WORKSPACE}` vs hardcoded path:**
+```
+${WORKSPACE}  = /var/lib/jenkins/workspace/go-web-app/  ← always correct
+/home/vagrant/devops/  ← hardcoded path → fails (jenkins user has no access)
+```
+
+**Setting variables dynamically inside stages:**
+```groovy
+stage('Version Tag') {
+    steps {
+        script {
+            env.IMAGE_VERSION = "v1.5"       // env.X = set for remaining stages
+            env.IMAGE_TAG = "saurabhhub1/go-web-app:v1.5"
+        }
+    }
+}
+stage('Docker Build') {
+    steps {
+        sh "docker build -t ${env.IMAGE_TAG} ."   // uses value set in previous stage
+    }
+}
+```
+
+**Why VERSION_FILE is OUTSIDE workspace:**
+```
+${WORKSPACE}/file  →  git checkout WIPES this every build (git clean)
+/var/lib/jenkins/.docker_version  →  OUTSIDE workspace, survives every build ✅
+```
+
+---
+
+## 3.6d  `sh` STEP — FAILURE HANDLING AND ESCAPING
+
+**`sh` fails the pipeline if the command exits non-zero:**
+```groovy
+sh "go test ./..."        // if tests fail → exit code 1 → pipeline STOPS here
+sh "ls nonexistent-dir"   // exit code 1 → pipeline fails
+
+// To run a command but NOT fail the pipeline:
+sh "command || true"      // || true forces exit code 0 even if command fails
+sh "ls ${DEVOPS_DIR} || true"   // used in Stage 1 — won't fail if dir is empty
+```
+
+**Variable escaping inside `sh "..."`:**
+```groovy
+// Jenkins variable (expand BEFORE bash runs it):
+sh "cd ${APP_DIR}"                 // ${APP_DIR} is replaced by Jenkins → bash sees actual path
+
+// Bash variable (must escape $ so bash expands it, not Jenkins):
+sh "echo \$HOME"                   // \$ → bash gets: echo $HOME → prints /home/jenkins
+sh "export PATH=\$PATH:/usr/local/go/bin"   // same pattern
+
+// Inside triple-quoted block (sh """...""") — same rules apply:
+sh """
+    export PATH=\$PATH:${GO_BIN}   // \$PATH = bash var,  ${GO_BIN} = Jenkins var
+    go test ./...
+"""
+```
+
+---
+
+## 3.7  THE CORE MENTAL MODEL — Who Does What
+
+This is the most important thing to understand about the entire pipeline.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  YOU (on HOST laptop)                                               │
+│    Edit code → git push → GitHub                                    │
+│                                                                     │
+│  Rule: ALL code changes come from the host.                         │
+│        Never edit files directly on the Jenkins VM.                 │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │  Jenkins polls GitHub every 5 min
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  JENKINS VM (automated)                                             │
+│    1. Clones fresh copy from GitHub into /var/lib/jenkins/workspace/│
+│    2. Runs go test ./...                                            │
+│    3. Builds Docker image                                           │
+│    4. Pushes image → DockerHub                                      │
+│    5. Updates helm/values.yaml with new image tag                   │
+│    6. Pushes THAT ONE FILE back to GitHub  ← only push Jenkins makes│
+│                                                                     │
+│  Rule: Jenkins makes exactly ONE git push per pipeline run.         │
+│        Only the Helm values.yaml tag line. Nothing else.            │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │  [skip ci] in commit message
+                               │  prevents Jenkins triggering itself again
+                               ▼
+                          GitHub updated
+                          values.yaml: tag: "v1.5"
+                          (ArgoCD will detect this in Phase 5)
+```
+
+### Why `[skip ci]` matters
+
+Stage 7 pushes a commit to GitHub. Without `[skip ci]`, Jenkins would detect that new commit and trigger another build — which would push another commit — infinite loop.
+
+The `[skip ci]` tag in the commit message tells GitHub Actions / poll SCM to ignore that commit:
+```groovy
+git commit -m "ci: update Helm image tag to ${env.IMAGE_VERSION} [skip ci]"
+```
+
+### The Jenkins VM should always be "clean"
+
+Jenkins clones a **fresh copy** from GitHub every build. It never reads from the synced Vagrant folder.
+
+This means:
+- If you edit a file on the Jenkins VM → it gets **overwritten** on next build (lost)
+- If you need to change the Jenkinsfile → edit on HOST → git push → Jenkins uses it next run
+- If the Jenkins workspace looks wrong → delete it, Jenkins will re-clone on next build
+
+```bash
+# If workspace is in a bad state — delete it, Jenkins recreates automatically
+sudo rm -rf /var/lib/jenkins/workspace/go-web-app/
+# Click Build Now — Jenkins will re-clone
+```
+
+---
+
+## 3.8  KEY CONCEPT — Jenkins WORKSPACE vs Synced Folder
 
 This is the most important thing to understand to avoid confusion:
 
@@ -1856,6 +2470,34 @@ Then Jenkins job was updated: Branch `*/main`, Script Path `devops_implementaion
 
 ## 3.11  JENKINS GOTCHAS WE HIT
 
+### ❌ Stage 7 fails — "cannot pull with rebase: You have unstaged changes"
+
+```
+error: cannot pull with rebase: You have unstaged changes.
+error: please commit or stash them.
+```
+
+**Cause:** `sed` modifies `values.yaml` BEFORE `git pull --rebase` runs. Rebase requires a clean working tree.
+
+**Fix:** Always `git pull --rebase` FIRST (while tree is clean), THEN run `sed`.
+
+```groovy
+// WRONG — sed before pull
+sh """
+  sed -i 's/tag: .*/tag: "v1.2"/' values.yaml   // ← dirty tree
+  git pull --rebase origin main                   // ← FAILS
+"""
+
+// CORRECT — pull before sed
+sh """
+  git pull --rebase origin main   // ← clean tree ✅
+  sed -i 's/tag: .*/tag: "v1.2"/' values.yaml
+  git add values.yaml && git commit -m "..." && git push
+"""
+```
+
+---
+
 ### ❌ Jenkins pulling from synced folder path instead of GitHub
 
 ```
@@ -1937,7 +2579,7 @@ jenkins --version
 ---
 
 # ═══════════════════════════════════════════
-#  SECTION 4 — VAGRANT (Quick ref)
+#  SECTION 4 — VAGRANT (Quick ref)                      [Phase 1 — CI/CD]
 # ═══════════════════════════════════════════
 
 ## 4.1  VAGRANT COMMANDS
@@ -2338,6 +2980,103 @@ instance_type = "t2.micro" variable "instance_type"   region = var.aws_region
 4. resource {}    → plan what to create (using var.x)
 5. output {}      → after apply, print these values
 ```
+
+---
+
+## 5.7c  TERRAFORM RESOURCE REFERENCE SYNTAX
+
+Resources in different `.tf` files talk to each other using references — no imports needed.
+
+**Syntax:** `<resource_type>.<local_name>.<attribute>`
+
+```hcl
+# vpc.tf defines the VPC
+resource "aws_vpc" "main" {
+  cidr_block = "10.0.0.0/16"
+}
+
+# security_groups.tf REFERENCES the VPC by its local name
+resource "aws_security_group" "k8s_master_sg" {
+  vpc_id = aws_vpc.main.id        # ← type=aws_vpc, name=main, attribute=id
+  #        ─────────────────
+  #        Terraform resolves this to the actual AWS VPC ID after the VPC is created
+}
+
+# outputs.tf REFERENCES the EC2 instance
+output "master_public_ip" {
+  value = aws_instance.k8s_master.public_ip   # ← type=aws_instance, name=k8s_master
+}
+```
+
+**What happens if NOT used:**
+You'd have to hardcode actual AWS IDs (e.g., `vpc-0abc123`) — which change every `terraform apply`. References let Terraform resolve IDs automatically and determine the creation order.
+
+**Terraform automatically figures out order:**
+```
+aws_security_group references aws_vpc.main.id
+→ Terraform knows: create VPC first, then SG
+→ No manual ordering needed
+```
+
+---
+
+## 5.7d  `tls_private_key` RESOURCE — AUTO-GENERATE SSH KEY FOR EC2
+
+Instead of manually running `ssh-keygen`, Terraform generates the key pair as part of `terraform apply`.
+
+```hcl
+# Generates the key pair in memory
+resource "tls_private_key" "k8s_key" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+# Uploads the PUBLIC key to AWS (so EC2 allows SSH with this key)
+resource "aws_key_pair" "k8s_key_pair" {
+  key_name   = "terraform-key"
+  public_key = tls_private_key.k8s_key.public_key_openssh  # ← reference
+}
+
+# Saves the PRIVATE key to a .pem file on the Jenkins VM
+resource "local_file" "private_key" {
+  content         = tls_private_key.k8s_key.private_key_pem
+  filename        = "~/terraform-key.pem"
+  file_permission = "0400"   # owner read-only — SSH refuses keys with looser permissions
+}
+```
+
+**After `terraform apply`:** The file `~/terraform-key.pem` exists on the Jenkins VM.
+
+**SSH into EC2:**
+```bash
+ssh -i ~/terraform-key.pem ubuntu@<ec2-public-ip>
+# -i = identity file (which key to use)
+```
+
+**`file_permission = "0400"` — why:**
+SSH refuses to use private keys if the file is readable by others. `0400` = owner read-only.
+If wrong permissions: `WARNING: UNPROTECTED PRIVATE KEY FILE` → SSH refuses to connect.
+
+---
+
+## 5.7e  `depends_on` — EXPLICIT RESOURCE ORDERING
+
+Normally Terraform figures out order automatically via references. `depends_on` is for cases where the dependency is implicit (not a direct reference).
+
+```hcl
+resource "aws_instance" "k8s_worker" {
+  # ...
+  depends_on = [aws_internet_gateway.main]
+  # Terraform might not see this dependency from references alone
+  # Without it: EC2 might try to launch before IGW exists → networking fails
+}
+```
+
+**When you need it:**
+- Resource A uses Resource B, but doesn't directly reference B's attributes
+- A depends on a side effect of B (e.g., an IAM role policy being attached before an EC2 launches)
+
+**In our project:** Not explicitly used — Terraform detects dependencies via the `aws_vpc.main.id` references automatically.
 
 ---
 

@@ -70,7 +70,8 @@ go-web-app/                              ← repo root (main branch — single s
     ├── k8s/manifests/                   ← Raw K8s YAMLs
     ├── terraform/                       ← AWS infrastructure (EC2, VPC, SG)
     ├── .github/workflows/cicd.yaml      ← GitHub Actions pipeline
-    ├── flow_and_commands.md             ← PRIMARY reference — all commands + concepts
+    ├── flow_and_commands.md             ← Commands + concepts (learning reference)
+    ├── operations.md                    ← Server access, URLs, status checks (daily ops)
     ├── NOTES.md                         ← Architecture decisions + troubleshooting
     ├── pipeline_plan.md                 ← 7-phase roadmap with status
     └── senior_suggestions.md           ← Senior DevOps additions per phase
