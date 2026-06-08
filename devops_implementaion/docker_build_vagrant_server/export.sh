@@ -1,3 +1,0 @@
-export DOCKERHUB_USERNAME=your_dockerhub_username
-
-export DOCKERHUB_TOKEN=your_dockerhub_token
