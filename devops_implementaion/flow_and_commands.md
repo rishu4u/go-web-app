@@ -1716,17 +1716,60 @@ Jenkins checks GitHub on a schedule. If new commits are found → trigger build.
 
 ```
 Jenkins Job → Configure → Build Triggers → Poll SCM
-Schedule: H/5 * * * *    ← check every 5 minutes
+Schedule: H/5 * * * *
 
 Cron format: MIN HOUR DAY MONTH WEEKDAY
-H/5 * * * * = every 5 minutes (H = hash, spreads load across Jenkins jobs)
 ```
 
 How it works:
 ```
-Every 5 min: Jenkins asks GitHub "any new commits since I last checked?"
+Jenkins asks GitHub every X minutes: "any new commits since I last checked?"
     → No  → do nothing
     → Yes → trigger build immediately
+```
+
+### Understanding `H` in the schedule — critical to know
+
+`H` is NOT "right now." It is a **hash of the job name** that picks a fixed consistent time offset.
+
+```
+H/5 * * * *   ← "every 5 minutes, starting at hash(jobname) % 5"
+
+Example: job "go-web-app" hashes to offset 1
+→ polls at: :01, :06, :11, :16, :21, :26, :31, :36, :41, :46, :51, :56
+→ NOT at :00, :05, :10... (that would be */5)
+```
+
+**What this means practically:**
+
+After you push to GitHub, Jenkins will NOT poll immediately.
+It polls at the next hash-aligned slot. If you just missed one, you wait the full interval.
+
+```
+You push at 11:32
+H offset for your job = :56 of each 5-min block
+Next poll = 11:36  → detects change → build triggers
+```
+
+**`H/1` vs `*/1` — the difference:**
+
+| Schedule | Meaning | First poll after config change |
+|---|---|---|
+| `H/1 * * * *` | Every 1 min, at a fixed hash-offset slot | Waits for next hash-aligned minute (e.g. :56 of each hour → 11:56, 12:56...) |
+| `*/1 * * * *` | Every 1 min starting at :00 | Runs at :00 of every minute |
+
+> ⭐ `H` exists to prevent all Jenkins jobs polling simultaneously and hammering GitHub at the same second. It spreads the load. The tradeoff is the first poll after a change may appear delayed.
+
+**If you need to poll immediately — don't wait:**
+```
+Jenkins UI → job → left sidebar → "Poll SCM" button   ← forces an immediate poll
+Jenkins UI → job → "Build Now"                         ← bypasses polling entirely
+```
+
+**Check the Git Polling Log to see exactly when polls ran:**
+```
+Jenkins UI → go-web-app job → left sidebar → "Git Polling Log"
+Shows: timestamp of each poll + which commit hash was seen + Changes found / No changes
 ```
 
 ### Trigger 3 — GitHub Hook Trigger for GITScm Polling
