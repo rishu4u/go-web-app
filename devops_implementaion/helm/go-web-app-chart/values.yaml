@@ -6,7 +6,7 @@ replicaCount: 1
 image:
   repository: saurabhhub1/go-web-app
   pullPolicy: IfNotPresent
-  tag: "latest"
+  tag: "v1.2"
 
 service:
   type: ClusterIP
