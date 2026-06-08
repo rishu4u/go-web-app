@@ -1,0 +1,46 @@
+---
+# Install k3s server (control plane) on master node
+
+- name: Print master node IP
+  debug:
+    msg: "Installing k3s master on {{ ansible_default_ipv4.address }} (private IP)"
+
+- name: Install k3s server
+  shell: curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="{{ k3s_exec_args }}" sh -
+  args:
+    creates: /usr/local/bin/k3s    # idempotent — skip if already installed
+  notify: Restart k3s
+
+- name: Wait for k3s node-token to be generated
+  wait_for:
+    path: "{{ k3s_token_file }}"
+    timeout: 60
+
+- name: Start and enable k3s service
+  service:
+    name: k3s
+    state: started
+    enabled: yes
+
+- name: Read k3s node token
+  slurp:
+    src: "{{ k3s_token_file }}"
+  register: k3s_token_raw
+
+- name: Set k3s token as fact (used by worker via hostvars)
+  set_fact:
+    k3s_token: "{{ k3s_token_raw.content | b64decode | trim }}"
+
+- name: Print token and IP for reference
+  debug:
+    msg:
+      - "K3S_TOKEN : {{ k3s_token }}"
+      - "MASTER_PRIVATE_IP : {{ ansible_default_ipv4.address }}"
+
+- name: Verify cluster nodes
+  shell: k3s kubectl get nodes
+  register: nodes_out
+  changed_when: false
+
+- debug:
+    var: nodes_out.stdout_lines

@@ -1,0 +1,4 @@
+---
+# Role defaults — lowest variable precedence, easily overridden
+# Override with: ansible-playbook site.yml -e "k3s_version=v1.30.0"
+k3s_version: "v1.29.0"

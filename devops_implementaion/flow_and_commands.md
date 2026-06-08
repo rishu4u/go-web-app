@@ -3487,3 +3487,289 @@ Expected output (both nodes responding):
 
 ✅ Both EC2 instances confirmed reachable — 2026-06-08
 
+
+---
+
+## 6.6  ansible.cfg — CONFIG FILE PRECEDENCE + WHY LOCAL DIRECTORY
+
+Ansible looks for `ansible.cfg` in this order (first found wins):
+
+```
+1. ANSIBLE_CONFIG environment variable          ← highest priority
+2. ./ansible.cfg                                ← current directory ✅ WE USE THIS
+3. ~/.ansible.cfg                               ← user home directory
+4. /etc/ansible/ansible.cfg                     ← system-wide (lowest)
+```
+
+**Why we create `ansible.cfg` inside the `ansible/` directory:**
+When you `cd ansible/ && ansible-playbook site.yml`, Ansible picks up `./ansible.cfg`
+automatically. No need to pass flags. Anyone who clones the repo gets the same config.
+
+**Key settings and what they do:**
+
+```ini
+[defaults]
+host_key_checking = False    # explained in 6.7 below
+timeout = 30                 # SSH connection timeout in seconds
+inventory = ./inventory.ini  # default inventory — no need to pass -i every time
+forks = 5                    # run tasks on 5 hosts in parallel (our project has 2)
+log_path = /var/log/ansible.log  # log all runs for auditing
+
+[privilege_escalation]
+become = True                # default to sudo for all tasks
+become_method = sudo
+become_ask_pass = False      # ubuntu EC2 user has passwordless sudo — no prompt needed
+```
+
+> ⭐ With `ansible.cfg` in the directory, you run: `ansible-playbook site.yml`
+> Without it, you'd run: `ansible-playbook -i inventory.ini --become site.yml`
+
+---
+
+## 6.7  `host_key_checking = False` — WHAT IT IS AND WHY
+
+When you SSH to a new server for the first time, SSH asks:
+
+```
+The authenticity of host '18.206.136.124' can't be established.
+Are you sure you want to continue connecting (yes/no)?
+```
+
+This is **SSH host key verification** — SSH stores the server's fingerprint in `~/.ssh/known_hosts`
+and checks it matches on future connections (prevents man-in-the-middle attacks).
+
+**Why we disable it for EC2:**
+Every `terraform apply` creates NEW EC2 instances with NEW fingerprints. If host key
+checking is enabled, Ansible would stop at every task asking for confirmation — breaking
+unattended automation.
+
+**Three places you can disable it:**
+
+| Where | How | Scope |
+|---|---|---|
+| `ansible.cfg` | `host_key_checking = False` | All runs from this directory ✅ our approach |
+| Inventory | `ansible_ssh_common_args='-o StrictHostKeyChecking=no'` | Per host/group |
+| Environment | `export ANSIBLE_HOST_KEY_CHECKING=False` | Current shell session |
+
+> ⚠️ Only disable in dev/CI environments where EC2 IPs change frequently.
+> In production with stable servers, leave host key checking ON.
+
+---
+
+## 6.8  VARIABLE PRECEDENCE — All 7 Levels (lowest to highest)
+
+```
+1. Role defaults          (roles/k3s_master/defaults/main.yml)   ← lowest, easily overridden
+2. Inventory vars         (in inventory.ini under [group:vars])
+3. group_vars/all         (applies to every host)
+4. group_vars/<groupname> (applies to hosts in that group)
+5. host_vars/<hostname>   (applies to one specific host)
+6. Playbook vars          (vars: section in the play)
+7. Extra vars (-e flag)   ← highest, always wins
+```
+
+**In our project:**
+
+```
+roles/k3s_master/defaults/main.yml   →  k3s_version: "v1.29.0"   (can be overridden)
+group_vars/k8s_all.yml               →  k3s_port: 6443             (all nodes)
+group_vars/k8s_master.yml            →  k3s_exec_args: "server"    (master only)
+ansible-playbook site.yml -e "k3s_version=v1.30.0"  →  override for this run
+```
+
+**Why this matters:**
+You set sensible defaults in roles. Operations team overrides for their environment
+without touching role code. CI pipeline overrides version per build.
+
+---
+
+## 6.9  ROLES — DIRECTORY STRUCTURE
+
+A Role packages tasks + handlers + vars + templates + files into a reusable unit.
+Avoids monolithic 200-line playbooks.
+
+```
+roles/
+├── common/                    ← shared setup for ALL nodes
+│   └── tasks/
+│       └── main.yml           ← auto-loaded when role is called
+│
+├── k3s_master/                ← k3s control plane
+│   ├── tasks/
+│   │   └── main.yml
+│   ├── handlers/
+│   │   └── main.yml           ← restart k3s when config changes
+│   └── defaults/
+│       └── main.yml           ← default vars (lowest precedence)
+│
+└── k3s_worker/                ← k3s agent (joins cluster)
+    ├── tasks/
+    │   └── main.yml
+    ├── handlers/
+    │   └── main.yml
+    └── defaults/
+        └── main.yml
+```
+
+How roles are called in site.yml:
+```yaml
+- name: Configure master
+  hosts: k8s_master
+  become: yes
+  roles:
+    - common        # runs common/tasks/main.yml first
+    - k3s_master    # then k3s_master/tasks/main.yml
+
+- name: Configure worker
+  hosts: k8s_worker
+  become: yes
+  roles:
+    - common
+    - k3s_worker
+```
+
+---
+
+## 6.10  HANDLERS — RESTART ONLY WHEN SOMETHING CHANGES
+
+Handlers only run when **notified** by a task that actually made a change.
+They run ONCE at the end of the play, even if notified multiple times.
+
+```yaml
+tasks:
+  - name: Copy k3s config file
+    template:
+      src: k3s_config.j2
+      dest: /etc/rancher/k3s/config.yaml
+    notify: Restart k3s        # ← only fires if file actually changed
+
+handlers:
+  - name: Restart k3s
+    service:
+      name: k3s
+      state: restarted
+```
+
+**Without handlers:** You'd always restart the service whether or not config changed.
+Unnecessary restarts = downtime. Handlers solve this.
+
+---
+
+## 6.11  LOOPS — INSTALL MULTIPLE PACKAGES IN ONE TASK
+
+```yaml
+# Without loop (verbose — one task per package):
+- name: Install curl
+  apt:
+    name: curl
+    state: present
+
+- name: Install apt-transport-https
+  apt:
+    name: apt-transport-https
+    state: present
+
+# With loop (clean — one task, list of items):
+- name: Install required packages
+  apt:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - curl
+    - apt-transport-https
+    - ca-certificates
+```
+
+Also works with dicts (key-value pairs per item):
+```yaml
+- name: Create users
+  user:
+    name: "{{ item.name }}"
+    groups: "{{ item.group }}"
+  loop:
+    - { name: alice, group: devops }
+    - { name: bob, group: devops }
+```
+
+---
+
+## 6.12  `hostvars` — PASSING VARIABLES BETWEEN HOSTS
+
+When site.yml runs master play first, then worker play, the worker can access
+variables set (via `set_fact`) on the master using `hostvars`:
+
+```yaml
+# In master role — set fact after getting token
+- set_fact:
+    k3s_token: "{{ token_raw.content | b64decode | trim }}"
+
+# In worker role — read master's fact
+vars:
+  k3s_token: "{{ hostvars[groups['k8s_master'][0]]['k3s_token'] }}"
+  master_ip: "{{ hostvars[groups['k8s_master'][0]]['ansible_default_ipv4']['address'] }}"
+```
+
+`groups['k8s_master'][0]` = "get the first host in the k8s_master group"
+`hostvars[hostname]` = "get all facts/set_facts for that host"
+
+> ⭐ This is the clean way to pass k3s token from master to worker in ONE playbook run.
+> No manual copy-paste of the token needed.
+
+---
+
+## 6.13  ANSIBLE GOTCHAS
+
+### ❌ ansible.cfg not picked up — wrong directory
+Ansible only loads `./ansible.cfg` if you run from the SAME directory the file is in.
+```bash
+# Works — ansible.cfg is in current directory
+cd /home/vagrant/go-web-app/devops_implementaion/ansible/
+ansible-playbook site.yml
+
+# Fails to load config — wrong directory
+cd /home/vagrant
+ansible-playbook go-web-app/devops_implementaion/ansible/site.yml
+```
+
+### ❌ `creates:` path must be absolute on remote
+```yaml
+# Wrong — relative path
+shell: curl -sfL https://get.k3s.io | sh -
+args:
+  creates: k3s          # looks for k3s in current dir — never matches
+
+# Correct — absolute path
+args:
+  creates: /usr/local/bin/k3s   # checks the actual install location
+```
+
+### ❌ hostvars not available if gather_facts is off
+If you set `gather_facts: False` on the master play, `ansible_default_ipv4` will be
+empty. The worker play relies on this fact to get the master's private IP.
+Solution: leave `gather_facts: yes` (default) on the master play.
+
+### ❌ k3s token contains newline — always use .trim()
+```yaml
+# Wrong — token has trailing newline, breaks join command
+k3s_token: "{{ token_raw.content | b64decode }}"
+
+# Correct
+k3s_token: "{{ token_raw.content | b64decode | trim }}"
+```
+
+### ❌ Worker joins wrong master if using public IP
+k3s agent must join using the master's PRIVATE IP (stays stable within VPC).
+Public IP changes if instance is stopped/started. Use `ansible_default_ipv4.address`
+which returns the private IP on EC2.
+
+---
+
+## 6.14  REMAINING CONCEPTS — For Later Phases
+
+These two concepts from the Ansible notes are intentionally deferred:
+
+| Concept | Deferred to | Why |
+|---|---|---|
+| **Ansible Vault** | Phase 6 (Monitoring) | Prometheus/Grafana have static passwords — good use case for vault |
+| **Dynamic Inventory** | Phase 5 (ArgoCD) or Phase 6 | Once EC2 instances are stable and tagged, dynamic inventory replaces static IPs |
+

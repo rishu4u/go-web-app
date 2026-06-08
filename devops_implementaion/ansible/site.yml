@@ -1,0 +1,17 @@
+---
+# Master playbook — runs master first, then worker
+# Worker uses hostvars to get k3s token from master automatically
+
+- name: Configure K8s master node
+  hosts: k8s_master
+  become: yes
+  roles:
+    - common
+    - k3s_master
+
+- name: Configure K8s worker node
+  hosts: k8s_worker
+  become: yes
+  roles:
+    - common
+    - k3s_worker

@@ -1,0 +1,4 @@
+---
+# Variables shared across ALL k8s nodes (master + worker)
+k3s_port: 6443
+k3s_kubeconfig_path: /etc/rancher/k3s/k3s.yaml

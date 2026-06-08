@@ -1,0 +1,22 @@
+---
+# Common setup for ALL nodes (master + worker)
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Install required packages
+  apt:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - curl
+    - apt-transport-https
+    - ca-certificates
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Print node OS info
+  debug:
+    msg: "Node {{ inventory_hostname }} is running {{ ansible_distribution }} {{ ansible_distribution_version }}"

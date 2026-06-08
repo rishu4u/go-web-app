@@ -1,0 +1,29 @@
+---
+# Install k3s agent on worker and join it to the cluster
+# Uses hostvars to get master's token and IP — no manual copy-paste needed
+
+- name: Set master connection vars from hostvars
+  set_fact:
+    k3s_master_private_ip: "{{ hostvars[groups['k8s_master'][0]]['ansible_default_ipv4']['address'] }}"
+    k3s_join_token: "{{ hostvars[groups['k8s_master'][0]]['k3s_token'] }}"
+
+- name: Print worker join info
+  debug:
+    msg:
+      - "Worker {{ inventory_hostname }} joining master at {{ k3s_master_private_ip }}"
+
+- name: Install k3s agent and join cluster
+  shell: >
+    curl -sfL https://get.k3s.io |
+    K3S_URL=https://{{ k3s_master_private_ip }}:{{ k3s_port }}
+    K3S_TOKEN={{ k3s_join_token }}
+    sh -
+  args:
+    creates: /usr/local/bin/k3s
+  notify: Restart k3s-agent
+
+- name: Start and enable k3s-agent service
+  service:
+    name: k3s-agent
+    state: started
+    enabled: yes

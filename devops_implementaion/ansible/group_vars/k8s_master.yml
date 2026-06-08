@@ -1,0 +1,4 @@
+---
+# Variables specific to the master node only
+k3s_exec_args: "server --write-kubeconfig-mode=644"
+k3s_token_file: /var/lib/rancher/k3s/server/node-token
