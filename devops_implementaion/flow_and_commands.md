@@ -16,7 +16,7 @@
 | [Section 3](#section-3--jenkins) | Jenkins | Phase 1 | Pipeline stages, SSH keys, credentials, Jenkinsfile explained, build triggers |
 | [Section 4](#section-4--vagrant-quick-ref) | Vagrant | Phase 1 | Quick command reference |
 | [Section 5](#section-5--phase-2-terraform--aws) | Terraform + AWS | Phase 2 | Install, AWS CLI setup, block types, `terraform apply` workflow |
-| Section 6 *(coming)* | Ansible | Phase 3 | EC2 config, k3s install playbooks |
+| [Section 6](#section-6--ansible--phase-3--config-management) | Ansible | Phase 3 | Mental model, inventory, ping test, k3s playbooks |
 | Section 7 *(coming)* | Kubernetes + Helm | Phase 4 | kubectl, helm install/upgrade/rollback |
 | Section 8 *(coming)* | ArgoCD | Phase 5 | GitOps sync, app setup |
 | Section 9 *(coming)* | Prometheus + Grafana | Phase 6 | Monitoring stack, dashboards, alerts |
@@ -938,6 +938,40 @@ hint: Updates were rejected because the remote contains work that you do not hav
 ```bash
 git pull --rebase origin main   # rebase your commits on top of remote
 git push origin main
+```
+
+---
+
+### ❌ Diverged with Jenkins — this will keep happening in this project
+
+In this project, **Jenkins Stage 7 pushes a Helm tag commit to GitHub after every build**.
+If you make a local commit around the same time, branches diverge.
+
+```
+Jenkins pushed Stage 7:    cc84b6a → 2f4d301  (Helm tag update)
+You committed locally:     cc84b6a → 75f3984  (your change)
+Both from same base → diverged
+```
+
+**This is not a mistake — it's two sources pushing to the same branch.**
+
+**Fix every time:**
+```bash
+git pull --rebase origin main   # put Jenkins' commit first, yours on top
+git push
+```
+
+**Permanent fix — set once, never see the error again:**
+```bash
+git config --global pull.rebase true
+# Now bare 'git pull' always rebases automatically
+```
+
+**Standard workflow for this project going forward:**
+```bash
+git pull --rebase origin main   # always sync Jenkins' changes first
+git add . && git commit -m "..."
+git push
 ```
 
 ---
@@ -3292,4 +3326,164 @@ Key Pair: terraform-key (SSH access to EC2 instances)
 ---
 
 *Last updated: 2026-04-10 — Phase 2 started: AWS CLI + Terraform installed on Jenkins VM ✅*
+
+---
+
+---
+
+# ═══════════════════════════════════════════
+#  SECTION 6 — ANSIBLE                          [Phase 3 — Config Management]
+# ═══════════════════════════════════════════
+
+## 6.1  CORE MENTAL MODEL
+
+```
+Terraform creates the machines (EC2)
+        ↓
+Ansible configures the machines (installs software, sets up K8s)
+        ↓
+Result: K8s cluster ready to deploy apps
+```
+
+Ansible is **agentless** — it SSHes into target machines and runs commands remotely.
+No software needs to be installed on the target machines (only Python, which Ubuntu has).
+
+```
+Control Node (Jenkins VM)          Managed Nodes (EC2 on AWS)
+─────────────────────────          ──────────────────────────
+Ansible is installed here    SSH→  EC2 Master  (18.206.136.124)
+Playbooks run from here      SSH→  EC2 Worker  (44.192.6.170)
+```
+
+### Ansible vs Terraform
+
+| Terraform | Ansible |
+|---|---|
+| Creates infrastructure (EC2, VPC, SG) | Configures infrastructure (install Docker, K8s) |
+| "Build the house" | "Furnish the house" |
+| Declarative — defines end state | Procedural — runs steps in order |
+| Manages cloud resources via APIs | Manages OS/software via SSH |
+
+---
+
+## 6.2  KEY CONCEPTS
+
+### Inventory
+Tells Ansible WHICH machines to manage and HOW to connect.
+
+```ini
+# inventory.ini
+
+[k8s_master]                                      # group name
+18.206.136.124 ansible_user=ubuntu \              # IP + how to login
+  ansible_ssh_private_key_file=~/terraform-key.pem \   # which SSH key
+  ansible_ssh_common_args='-o StrictHostKeyChecking=no' # skip host key prompt
+
+[k8s_worker]
+44.192.6.170 ansible_user=ubuntu \
+  ansible_ssh_private_key_file=~/terraform-key.pem \
+  ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[k8s_all:children]   # group of groups — targets BOTH master and worker
+k8s_master
+k8s_worker
+```
+
+**Why `StrictHostKeyChecking=no`:**
+New EC2 instances have an unknown SSH host key. Without this, Ansible would stop and
+ask "Are you sure you want to connect?" — which breaks unattended playbook runs.
+
+**Why `ansible_user=ubuntu`:**
+AWS Ubuntu AMIs create a default user called `ubuntu` (not `root`, not `vagrant`).
+
+### Playbook
+A YAML file that describes WHAT to do on the managed nodes. One playbook = a list of tasks.
+
+```yaml
+---
+- name: Install Docker              # playbook name
+  hosts: k8s_all                    # run on which group from inventory
+  become: true                      # sudo (run as root)
+  tasks:
+    - name: Install docker.io       # task name (shown in output)
+      apt:                          # Ansible module — manages apt packages
+        name: docker.io
+        state: present              # ensure installed
+        update_cache: yes
+```
+
+### Module
+A module is an Ansible built-in function. Instead of writing raw bash, you use modules:
+
+| Module | What it does | Equivalent bash |
+|---|---|---|
+| `apt` | Install/remove packages | `apt-get install` |
+| `shell` | Run a shell command | `bash -c "..."` |
+| `copy` | Copy file to remote | `scp file host:path` |
+| `template` | Copy Jinja2 template | `scp` + variable substitution |
+| `service` | Start/stop/enable services | `systemctl start/enable` |
+| `get_url` | Download a file | `curl -O` |
+
+### `become: true`
+Runs the task as `sudo`. Without it, Ansible runs as `ubuntu` user — which can't install packages or modify system files.
+
+---
+
+## 6.3  ANSIBLE COMMANDS
+
+```bash
+# Test connectivity to all hosts (most useful first check)
+ansible -i inventory.ini k8s_all -m ping
+
+# Run a single ad-hoc command on all hosts (without a playbook)
+ansible -i inventory.ini k8s_all -m shell -a "uptime"
+ansible -i inventory.ini k8s_master -m shell -a "free -h"
+
+# Run a playbook
+ansible-playbook -i inventory.ini install_k3s.yml
+
+# Run a playbook with verbose output (shows each task)
+ansible-playbook -i inventory.ini install_k3s.yml -v
+
+# Run a playbook but only show what WOULD change (dry run)
+ansible-playbook -i inventory.ini install_k3s.yml --check
+
+# Run only specific tasks using tags
+ansible-playbook -i inventory.ini install_k3s.yml --tags "k3s_master"
+
+# Run playbook on a specific host only
+ansible-playbook -i inventory.ini install_k3s.yml --limit 18.206.136.124
+```
+
+---
+
+## 6.4  INVENTORY FILE — WHERE IT LIVES
+
+```
+Host (on laptop):
+/home/srv/project_srv/go-web-app/devops_implementaion/ansible/inventory.ini
+
+Jenkins VM (synced from host):
+/home/vagrant/go-web-app/devops_implementaion/ansible/inventory.ini
+```
+
+> ⚠️ IPs change every `terraform apply` (new EC2 = new public IP).
+> Update inventory.ini with new IPs after each `terraform apply`.
+
+---
+
+## 6.5  CONNECTIVITY TEST — CONFIRMED WORKING
+
+```bash
+cd /home/vagrant/go-web-app/devops_implementaion/ansible/
+ansible -i inventory.ini k8s_all -m ping
+```
+
+Expected output (both nodes responding):
+```
+18.206.136.124 | SUCCESS => { "ping": "pong" }
+44.192.6.170   | SUCCESS => { "ping": "pong" }
+```
+
+✅ Both EC2 instances confirmed reachable — 2026-06-08
 
